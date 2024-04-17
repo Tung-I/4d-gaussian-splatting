@@ -8,8 +8,6 @@ import torch.nn.functional as F
 
 def get_normalized_directions(directions):
     """SH encoding must be in the range [0, 1]
-    Args:
-        directions: batch of directions
     """
     return (directions + 1.0) / 2.0
 
@@ -20,8 +18,7 @@ def normalize_aabb(pts, aabb):
 def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, align_corners: bool = True) -> torch.Tensor:
     grid_dim = coords.shape[-1]
     if grid.dim() == grid_dim + 1:
-        # no batch dimension present, need to add it
-        grid = grid.unsqueeze(0)
+        grid = grid.unsqueeze(0)  # add the batch dimension
     if coords.dim() == 2:
         coords = coords.unsqueeze(0)
 

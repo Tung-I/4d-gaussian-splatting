@@ -10,8 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 from utils.graphics_utils import batch_quaternion_multiply
-from scene.hexplane import HexPlaneField
-from scene.grid import DenseGrid
+from hexplane import HexPlaneField
 
 
 class Deformation(nn.Module):
@@ -24,15 +23,8 @@ class Deformation(nn.Module):
         self.input_ch_time = input_ch_time
         self.grid_pe = grid_pe
         self.grid = HexPlaneField(bounds, kplanes_config, multires)
-        # breakpoint()
-        # self.args.empty_voxel=True
-        if empty_voxel:
-            self.empty_voxel = DenseGrid(channels=1, world_size=[64,64,64])
-        if static_mlp:
-            self.static_mlp = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1))
         self.ratio=0
         self.no_grd = no_grid
-        self.empty_voxel = empty_voxel
         self.static_mlp = static_mlp
         self.bounds = bounds
         self.kplanes_config = kplanes_config
@@ -47,8 +39,6 @@ class Deformation(nn.Module):
     def set_aabb(self, xyz_max, xyz_min):
         print("Deformation Net Set aabb",xyz_max, xyz_min)
         self.grid.set_aabb(xyz_max, xyz_min)
-        if self.args.empty_voxel:
-            self.empty_voxel.set_aabb(xyz_max, xyz_min)
 
     def create_net(self):
         mlp_out_dim = 0
@@ -172,12 +162,7 @@ class Deformation(nn.Module):
 
 class deform_network(nn.Module):
     def __init__(self, net_width, timebase_pe, defor_depth, posbase_pe, scale_rotation_pe, opacity_pe, timenet_width, timenet_output, grid_pe, deform_network=None) :
-        super(deform_network, self).__init__()
-
-   
-
- 
-    
+        super(deform_network, self).__init__()    
         times_ch = 2*timebase_pe + 1
         self.timenet = nn.Sequential(
             nn.Linear(times_ch, timenet_width), nn.ReLU(),
@@ -208,12 +193,9 @@ class deform_network(nn.Module):
         return points
     
     def forward_dynamic(self, point, scales=None, rotations=None, opacity=None, shs=None, times_sel=None):
-        # times_emb = poc_fre(times_sel, self.time_poc)
         point_emb = poc_fre(point, self.pos_poc)
         scales_emb = poc_fre(scales, self.rotation_scaling_poc)
         rotations_emb = poc_fre(rotations, self.rotation_scaling_poc)
-        # time_emb = poc_fre(times_sel, self.time_poc)
-        # times_feature = self.timenet(time_emb)
         means3D, scales, rotations, opacity, shs = self.deformation_net( point_emb,
                                                   scales_emb,
                                                 rotations_emb,

@@ -1,44 +1,60 @@
 main:
-    random_seed: 'cookspinach'
+    random_seed: 6666
     saved_dir: '/home/ubuntu/4d-gaussian-splatting/output/cook_spinach'
+    exp_name: null
 
 dataset:
-    name: 'KitsSegDataset'
+    name: 'DynerfDataset'
     kwargs:
-        data_dir: '/home/peter850706/kits19_preprocessed/data'
-        data_split_csv: '/home/peter850706/kits19_preprocessed/dataset_split.csv'
-        train_preprocessings:
-            - name: 'Normalize'
-            - name: 'RandomCrop'
-              kwargs:
-                  size: [192, 192, 24]
-        valid_preprocessings:
-            - name: 'Normalize'
-            - name: 'PositiveCrop'
-              kwargs:
-                  positive_sampling_rate: 1.0
-                  size: [192, 192, 24]
-        augments:
-            - name: 'RandomElasticDeformation'
-            - name: 'RandomHorizontalFlip'
-            - name: 'RandomVerticalFlip'
-        transforms:
-            - name: 'ToTensor'
+        data_dir: '/home/ubuntu/datasets/dynerf/cook_spinach/'
+        extension: ".png"
+
             
 dataloader:
     name: 'Dataloader'
     kwargs:
-        train_batch_size: 2
+        train_batch_size: 1
         valid_batch_size: 1
         shuffle: true
-        num_workers: 4
+        num_workers: 8
+
+gaussians:
+    sh_degree: 3
+    white_background: true
 
 net:
-    name: 'UNet3D'
+    name: '4DGS'
     kwargs:
-        in_channels: 1
-        out_channels: 3
-        num_features: [32, 64, 128, 256, 512]
+        net_width: 128
+        timebase_pe: 4
+        defor_depth: 0
+        posebase_pe: 10
+        scale_rotation_pe: 2
+        opacity_pe: 2
+        timenet_width: 64
+        timenet_output: 32
+        bounds: 1.6
+        plane_tv_weight: 0.0002
+        time_smoothness_weight: 0.001
+        l1_time_planes: 0.0001
+        kplanes_config: {
+            'grid_dimensions': 2,
+            'input_coordinate_dim': 4,
+            'output_coordinate_dim': 16,
+            'resolution': [64, 64, 64, 150]
+        }
+        multires: [1, 2]
+        no_dx: False
+        no_grid: False
+        no_ds: False
+        no_dr: False
+        no_do: False
+        no_dshs: False
+        empty_voxel: False
+        grid_pe: 0
+        static_mlp: False
+        apply_rotation: False
+       
         
 losses:
     - name: 'DiceLoss'
@@ -48,14 +64,41 @@ metrics:
     - name: 'Dice'
 
 optimizer:
-    name: 'Adam'
-    kwargs:
-        lr: 0.001
-        weight_decay: 0
-        amsgrad: false
+    position_lr_init: 0.00016
+    position_lr_final: 0.0000016
+    position_lr_delay_mult: 0.01
+    position_lr_max_steps: 20000
+    deformation_lr_init: 0.00016
+    deformation_lr_final: 0.000016
+    deformation_lr_delay_mult: 0.01
+    grid_lr_init: 0.0016
+    grid_lr_final: 0.00016
+    feature_lr: 0.0025
+    opacity_lr: 0.05
+    scaling_lr: 0.005
+    rotation_lr: 0.001
+    percent_dense: 0.01
+    lambda_dssim: 0
+    lambda_lpips: 0
+    weight_constraint_init: 1
+    weight_constraint_after: 0.2
+    weight_decay_iteration: 5000
+    opacity_reset_interval: 60000
+    densification_interval: 100
+    densify_from_iter: 500
+    densify_until_iter: 10000
+    densify_grad_threshold_coarse: 0.0002
+    densify_grad_threshold_fine_init: 0.0002
+    densify_grad_threshold_after: 0.0002
+    pruning_from_iter: 500
+    pruning_interval: 100
+    opacity_threshold_coarse: 0.005
+    opacity_threshold_fine_init: 0.005
+    opacity_threshold_fine_after: 0.005
 
 logger:
     name: 'KitsSegLogger'
+    port: 6017
     kwargs:
         dummy_input: [16, 1, 128, 128]
 
@@ -68,21 +111,16 @@ monitor:
         early_stop: 0
 
 trainer:
-    name: 'KitsSegTrainer'
+    name: '4DGSTrainer'
     kwargs:
-        device: 'cuda:0'
+        device: 'cuda'
         num_epochs: 10000
-        percent_dense:
-        position_lr_init:
-        position_lr_final:
-        position_lr_delay_mult:
-        position_lr_max_steps:
-        deformation_lr_init:
-        deformation_lr_final:
-        deformation_lr_delay_mult:
-        grid_lr_init:
-        grid_lr_final:
-        feature_lr:
-        opacity_lr:
-        scaling_lr:
-        rotation_lr:
+        lazy_level: 0
+        test_iterations: [3000, 7000, 14000]
+        save_iterations: [14000]
+        iterations: 14000
+        coarse_iterations: 3000
+        add_point: False
+        zerostamp_init: False
+        custom_sampler: null
+
