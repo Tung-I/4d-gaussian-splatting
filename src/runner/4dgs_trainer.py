@@ -3,6 +3,7 @@ from torch import nn
 import numpy as np
 from base_trainer import BaseTrainer
 from src.utils.general_utils import get_expon_lr_func
+from src.utils.graphics_utils import build_rotation
 
 
 class Gaussian4DTrainer(BaseTrainer):
@@ -24,6 +25,7 @@ class Gaussian4DTrainer(BaseTrainer):
         self.scaling_lr = kwargs['scaling_lr']
         self.rotation_lr = kwargs['rotation_lr']
         self.spatial_lr_scale = self.model.gaussians.get_spatial_lr_scale()
+        self.percent_dense = kwargs['percent_dense']
         
         self.optimizer = None
 
@@ -74,7 +76,7 @@ class Gaussian4DTrainer(BaseTrainer):
                 lr = self.deformation_scheduler_args(iteration)
                 param_group['lr'] = lr
 
-    def replace_tensor_to_optimizer(self, tensor, name):
+    def _replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
             if group["name"] == name:
@@ -111,15 +113,24 @@ class Gaussian4DTrainer(BaseTrainer):
                 optimizable_tensors[group["name"]] = group["params"][0]
         return optimizable_tensors
 
-    def prune_points(self, mask):
+    def _prune_points(self, mask):
         """Remove points from the model that are not in the mask
         """
         valid_points_mask = ~mask
+        # Prune the optimizer
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
-        self.model.prune_points(valid_points_mask, optimizable_tensors)
+        # Call 3D Gaussians's pruning method
+        self.model.gaussians.prune_points(valid_points_mask, optimizable_tensors)
+        # Prune the deformation table
+        self.model._deformation_accum = self.model._deformation_accum[valid_points_mask]
+        self.model._deformation_table = self.model._deformation_table[valid_points_mask]
+        self.model.denom = self.model.denom[valid_points_mask]
+        
 
-    def cat_tensors_to_optimizer(self, tensors_dict):
+    def _cat_tensors_to_optimizer(self, tensors_dict):
         """ Add new points to the optimizer
+        Params:
+            tensors_dict: {xyz, f_dc, f_rest, opacity, scaling, rotation}
         """
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
@@ -143,43 +154,90 @@ class Gaussian4DTrainer(BaseTrainer):
 
         return optimizable_tensors
     
-    def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
-        # Get the new points, mask, and deformation table
-        d, selected_pts_mask, new_deformation_table = self.model.densify_and_split(grads, grad_threshold, scene_extent, N)
+    def _densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
 
-        # Add the new points to the optimizer
-        optimizable_tensors = self.cat_tensors_to_optimizer(d)
-        self.model.update_gaussians(optimizable_tensors)
+        # Get the mask
+        n_init_points = self.model.gaussians.get_xyz.shape[0]
+        padded_grad = torch.zeros((n_init_points), device="cuda")
+        padded_grad[:grads.shape[0]] = grads.squeeze()
+        selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
+        selected_pts_mask = torch.logical_and(selected_pts_mask,
+                                              torch.max(self.model.gaussians.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+        if not selected_pts_mask.any():
+            return
         
-        # Cat the new deformation table
-        self.model._deformation_table = torch.cat([self.model._deformation_table, new_deformation_table], -1)
-        self.model.gaussians.reset_grad()
+        # Calculate new attributes
+        stds = self.model.gaussians.get_scaling[selected_pts_mask].repeat(N,1)
+        means =torch.zeros((stds.size(0), 3),device="cuda")
+        samples = torch.normal(mean=means, std=stds)
+        rots = build_rotation(self.model.gaussians._rotation[selected_pts_mask]).repeat(N,1,1)
+        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.model.gaussians.get_xyz[selected_pts_mask].repeat(N, 1)
+        new_scaling = self.model.gaussians.scaling_inverse_activation(self.model.gaussians.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
+        new_rotation = self.model.gaussians._rotation[selected_pts_mask].repeat(N,1)
+        new_features_dc = self.model.gaussians._features_dc[selected_pts_mask].repeat(N,1,1)
+        new_features_rest = self.model.gaussians._features_rest[selected_pts_mask].repeat(N,1,1)
+        new_opacity = self.model.gaussians._opacity[selected_pts_mask].repeat(N,1)
+        new_deformation_table = self.model._deformation_table[selected_pts_mask].repeat(N)
 
-        # Prune the 3D Gaussians
+        d = {"xyz": new_xyz,
+        "f_dc": new_features_dc,
+        "f_rest": new_features_rest,
+        "opacity": new_opacity,
+        "scaling" : new_scaling,
+        "rotation" : new_rotation,
+        }
+
+        # Postfix
+        self._densification_postfix(d, new_deformation_table)
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
-        self.prune_points(prune_filter)
+        self._prune_points(prune_filter)
         
 
-    def densification_postfix(self, d, new_deformation_table):
-        """ Update the 3D Gaussians and reset the deformation table
+    def _densification_postfix(self, d, new_deformation_table):
+        """ Update the optimizer, 3D Gaussians, and deformation table
+        Params:
+            d: {xyz, f_dc, f_rest, opacity, scaling, rotation}
+            new_deformation_table: the new deformation table to be concatenated     
         """
-
-        optimizable_tensors = self.cat_tensors_to_optimizer(d)
-        self.model.update_gaussians(optimizable_tensors)
-        
-        # Cat the new deformation table
+        # Add points to the optimizer
+        optimizable_tensors = self._cat_tensors_to_optimizer(d)
+        # Update the 3D Gaussians
+        self.model.gaussians.update_points(optimizable_tensors)
+        # Update the deformation table
         self.model._deformation_table = torch.cat([self.model._deformation_table, new_deformation_table], -1)
-
-        # Reset the deformation accumulation
-
-        self._xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-
+        # Reset the gaussians statistics
+        self.model.gaussians._xyz_gradient_accum = torch.zeros((self.model.gaussians.get_xyz.shape[0], 1), device="cuda")
+        self.model.gaussians._max_radii2D = torch.zeros((self.model.gaussians.get_xyz.shape[0]), device="cuda")
+        # Reset the deformation statistics
         self.model._deformation_accum = torch.zeros((self.model.gaussians.get_xyz.shape[0], 3), device="cuda")
-        self._denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.model._denom = torch.zeros((self.model.gaussians.get_xyz.shape[0], 1), device="cuda")
 
-        self._max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+    def _densify_and_clone(self, grads, grad_threshold, scene_extent):
+        # Get the mask
+        grads_accum_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
+        selected_pts_mask = torch.logical_and(grads_accum_mask,
+                                              torch.max(self.model.gaussians.get_scaling, dim=1).values <= self.percent_dense*scene_extent)      
+        # Calculate new attributes
+        new_xyz = self._xyz[selected_pts_mask] 
+        new_features_dc = self._features_dc[selected_pts_mask]
+        new_features_rest = self._features_rest[selected_pts_mask]
+        new_opacities = self._opacity[selected_pts_mask]
+        new_scaling = self._scaling[selected_pts_mask]
+        new_rotation = self._rotation[selected_pts_mask]
 
-    
+        d = {"xyz": new_xyz,
+        "f_dc": new_features_dc,
+        "f_rest": new_features_rest,
+        "opacity": new_opacities,
+        "scaling" : new_scaling,
+        "rotation" : new_rotation,
+        }
+
+        new_deformation_table = self.model._deformation_table[selected_pts_mask]
+
+        # Postfix
+        self._densification_postfix(d, new_deformation_table)
+
 
     def _get_inputs_targets(self, batch):
         return batch['image'], batch['label']

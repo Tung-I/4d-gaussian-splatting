@@ -3,10 +3,10 @@ from torch import nn
 import numpy as np
 import os
 from simple_knn._C import distCUDA2
-from utils.general_utils import strip_symmetric, build_scaling_rotation, inverse_sigmoid, get_expon_lr_func, build_rotation, mkdir_p
-from utils.graphics_utils import BasicPointCloud
-from utils.plane_utils import compute_plane_smoothness
-from utils.sh_utils import RGB2SH
+from src.utils.general_utils import strip_symmetric, build_scaling_rotation, inverse_sigmoid, get_expon_lr_func, build_rotation, mkdir_p
+from src.utils.graphics_utils import BasicPointCloud
+from src.utils.plane_utils import compute_plane_smoothness
+from src.utils.sh_utils import RGB2SH
 from plyfile import PlyData, PlyElement
 
 class GaussianModel:
@@ -116,12 +116,6 @@ class GaussianModel:
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
 
-        
-    def reset_opacity(self):
-        opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
-        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
-        self._opacity = optimizable_tensors["opacity"]
-
     def load_ply(self, path):
         plydata = PlyData.read(path)
 
@@ -166,7 +160,7 @@ class GaussianModel:
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
         self._active_sh_degree = self._max_sh_degree
 
-    def update_gaussians(self, optimizable_tensors):
+    def update_points(self, optimizable_tensors):
         self._xyz = optimizable_tensors["xyz"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
@@ -175,48 +169,14 @@ class GaussianModel:
         self._rotation = optimizable_tensors["rotation"]
 
     def prune_points(self, valid_points_mask, optimizable_tensors):
-        self.update_gaussians(optimizable_tensors)
-        self.gaussians.xyz_gradient_accum = self.gaussians.xyz_gradient_accum[valid_points_mask]
-        self.gaussians.max_radii2D = self.gaussians.max_radii2D[valid_points_mask]
+        self.update_points(optimizable_tensors)
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
 
-    def reset_grad(self):
-        self._xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self._max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-
-    def get_selected_points(self, grads, grad_threshold, scene_extent, N):
-        # Extract points that satisfy the gradient condition
-        n_init_points = self.get_xyz.shape[0]
-        padded_grad = torch.zeros((n_init_points), device="cuda")
-        padded_grad[:grads.shape[0]] = grads.squeeze()
-        selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
-        selected_pts_mask = torch.logical_and(selected_pts_mask,
-                                              torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
-        if not selected_pts_mask.any():
-            return
-        
-        # Calculate the attributes of the new points
-        stds = self.get_scaling[selected_pts_mask].repeat(N,1)
-        means =torch.zeros((stds.size(0), 3),device="cuda")
-        samples = torch.normal(mean=means, std=stds)
-        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
-        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
-        new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
-        new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
-        new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
-        new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
-
-        d = {"xyz": new_xyz,
-        "f_dc": new_features_dc,
-        "f_rest": new_features_rest,
-        "opacity": new_opacity,
-        "scaling" : new_scaling,
-        "rotation" : new_rotation,
-        }
-        
-        return selected_pts_mask, d
+    def reset_opacity(self):
+        opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
+        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
+        self._opacity = optimizable_tensors["opacity"]
 
         
 

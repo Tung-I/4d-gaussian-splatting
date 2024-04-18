@@ -23,7 +23,7 @@ class GS4DModel:
         self.timenet_width = kwargs['timenet_width']
         self.timenet_output = kwargs['timenet_output']
         self.grid_pe = kwargs['grid_pe']
-        self.percent_dense = kwargs['percent_dense']
+
 
 
         self.gaussians = GaussianModel(self.sh_degree, self.percent_dense).to("cuda") 
@@ -62,30 +62,60 @@ class GS4DModel:
         torch.save(self._deformation_table,os.path.join(path, "deformation_table.pth"))
         torch.save(self._deformation_accum,os.path.join(path, "deformation_accum.pth"))
 
-    def prune_points(self, valid_points_mask, optimizable_tensors):
-        # Call 3D Gaussians's pruning method
-        self.gaussians.prune_points(valid_points_mask, optimizable_tensors)
+    
 
-        # Prune the deformation table
-        self._deformation_accum = self._deformation_accum[valid_points_mask]
-        self._deformation_table = self._deformation_table[valid_points_mask]
-        self.denom = self.denom[valid_points_mask]
+    def update_deformation_table(self,threshold):
+        # print("origin deformation point nums:",self._deformation_table.sum())
+        self._deformation_table = torch.gt(self._deformation_accum.max(dim=-1).values/100, threshold)
 
-    def update_gaussians(self, optimizable_tensors):
-        self.gaussians.update_gaussians(optimizable_tensors)
+    def print_deformation_weight_grad(self):
+        for name, weight in self._deformation.named_parameters():
+            if weight.requires_grad:
+                if weight.grad is None:
+                    
+                    print(name," :",weight.grad)
+                else:
+                    if weight.grad.mean() != 0:
+                        print(name," :",weight.grad.mean(), weight.grad.min(), weight.grad.max())
+        print("-"*50)
+    def _plane_regulation(self):
+        multi_res_grids = self._deformation.deformation_net.grid.grids
+        total = 0
+        # model.grids is 6 x [1, rank * F_dim, reso, reso]
+        for grids in multi_res_grids:
+            if len(grids) == 3:
+                time_grids = []
+            else:
+                time_grids =  [0,1,3]
+            for grid_id in time_grids:
+                total += compute_plane_smoothness(grids[grid_id])
+        return total
+    def _time_regulation(self):
+        multi_res_grids = self._deformation.deformation_net.grid.grids
+        total = 0
+        # model.grids is 6 x [1, rank * F_dim, reso, reso]
+        for grids in multi_res_grids:
+            if len(grids) == 3:
+                time_grids = []
+            else:
+                time_grids =[2, 4, 5]
+            for grid_id in time_grids:
+                total += compute_plane_smoothness(grids[grid_id])
+        return total
+    def _l1_regulation(self):
+                # model.grids is 6 x [1, rank * F_dim, reso, reso]
+        multi_res_grids = self._deformation.deformation_net.grid.grids
 
-    def densify_and_split(self, grads, grad_threshold, scene_extent, N):
-        # Get the selected points based on the gradient threshold
-        selected_pts_mask, d = self.gaussians.get_selected_points(grads, grad_threshold, scene_extent, N)
-        # Create a new deformation table
-        new_deformation_table = self._deformation_table[selected_pts_mask].repeat(N)
-        # Append the new deformation table to the existing one
-        self._deformation_table = torch.cat([self._deformation_table, new_deformation_table], -1)
-        # Reset the deformation accumulation and denominator
-        self._deformation_accum = torch.zeros((self.gaussians.get_xyz.shape[0], 3), device="cuda")
-        self._denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        
-        return d, selected_pts_mask, new_deformation_table
+        total = 0.0
+        for grids in multi_res_grids:
+            if len(grids) == 3:
+                continue
+            else:
+                # These are the spatiotemporal grids
+                spatiotemporal_grids = [2, 4, 5]
+            for grid_id in spatiotemporal_grids:
+                total += torch.abs(1 - grids[grid_id]).mean()
+        return total
+    def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight):
+        return plane_tv_weight * self._plane_regulation() + time_smoothness_weight * self._time_regulation() + l1_time_planes_weight * self._l1_regulation()
 
-       
-        
