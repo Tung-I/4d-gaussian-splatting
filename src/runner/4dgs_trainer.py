@@ -1,15 +1,22 @@
 import torch
 from torch import nn
 import numpy as np
+import os
+import random
 from base_trainer import BaseTrainer
 from src.utils.general_utils import get_expon_lr_func
 from src.utils.graphics_utils import build_rotation
+from src.model.gaussian4d import Gaussian4D
+from src.utils.camera import getNerfppNorm
+from src.utils.graphics_utils import fetchPly
 
 
 class Gaussian4DTrainer(BaseTrainer):
     def __init__(self, model, **kwargs):
         super().__init__(**kwargs)
-        self.model = model
+        self.model = Gaussian4D(**kwargs)
+        self.gaussians = self.model.gaussians
+
         self.position_lr_init = kwargs['position_lr_init']
         self.position_lr_final = kwargs['position_lr_final']
         self.position_lr_delay_mult = kwargs['position_lr_delay_mult']
@@ -24,16 +31,31 @@ class Gaussian4DTrainer(BaseTrainer):
         self.opacity_lr = kwargs['opacity_lr']
         self.scaling_lr = kwargs['scaling_lr']
         self.rotation_lr = kwargs['rotation_lr']
-        self.spatial_lr_scale = self.model.gaussians.get_spatial_lr_scale()
+        self.spatial_lr_scale = self.gaussians.get_spatial_lr_scale()
         self.percent_dense = kwargs['percent_dense']
         
         self.optimizer = None
+
+        self.train_cameras = {}
+        self.test_cameras = {}
+        self.video_cameras = {}
+
+        # # members in the base class
+        # device, train_dataloader, valid_dataloader, loss_fns, loss_weights, metric_fns, 
+        # logger, monitor, num_epochs, epoch, np_random_seeds
+
+        nerf_normalization = getNerfppNorm(self.train_cameras)
+
+        ply_path = os.path.join(self.data_dir, "points3D_downsample2.ply")
+        pcd = fetchPly(ply_path)
+        print(f"ply data loaded, initial points:{len(pcd.points)}")
 
 
     def _run(self, inputs):
         raise NotImplementedError
 
     def _training_setup(self):
+        self.model.training_setup()
 
         l = [
             {'params': [self._xyz], 'lr': self.position_lr_init * self._spatial_lr_scale, "name": "xyz"},
@@ -120,7 +142,7 @@ class Gaussian4DTrainer(BaseTrainer):
         # Prune the optimizer
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
         # Call 3D Gaussians's pruning method
-        self.model.gaussians.prune_points(valid_points_mask, optimizable_tensors)
+        self.gaussians.prune_points(valid_points_mask, optimizable_tensors)
         # Prune the deformation table
         self.model._deformation_accum = self.model._deformation_accum[valid_points_mask]
         self.model._deformation_table = self.model._deformation_table[valid_points_mask]
@@ -157,26 +179,26 @@ class Gaussian4DTrainer(BaseTrainer):
     def _densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
 
         # Get the mask
-        n_init_points = self.model.gaussians.get_xyz.shape[0]
+        n_init_points = self.gaussians.get_xyz.shape[0]
         padded_grad = torch.zeros((n_init_points), device="cuda")
         padded_grad[:grads.shape[0]] = grads.squeeze()
         selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
-                                              torch.max(self.model.gaussians.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+                                              torch.max(self.gaussians.get_scaling, dim=1).values > self.percent_dense*scene_extent)
         if not selected_pts_mask.any():
             return
         
         # Calculate new attributes
-        stds = self.model.gaussians.get_scaling[selected_pts_mask].repeat(N,1)
+        stds = self.gaussians.get_scaling[selected_pts_mask].repeat(N,1)
         means =torch.zeros((stds.size(0), 3),device="cuda")
         samples = torch.normal(mean=means, std=stds)
-        rots = build_rotation(self.model.gaussians._rotation[selected_pts_mask]).repeat(N,1,1)
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.model.gaussians.get_xyz[selected_pts_mask].repeat(N, 1)
-        new_scaling = self.model.gaussians.scaling_inverse_activation(self.model.gaussians.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
-        new_rotation = self.model.gaussians._rotation[selected_pts_mask].repeat(N,1)
-        new_features_dc = self.model.gaussians._features_dc[selected_pts_mask].repeat(N,1,1)
-        new_features_rest = self.model.gaussians._features_rest[selected_pts_mask].repeat(N,1,1)
-        new_opacity = self.model.gaussians._opacity[selected_pts_mask].repeat(N,1)
+        rots = build_rotation(self.gaussians._rotation[selected_pts_mask]).repeat(N,1,1)
+        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.gaussians.get_xyz[selected_pts_mask].repeat(N, 1)
+        new_scaling = self.gaussians.scaling_inverse_activation(self.gaussians.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
+        new_rotation = self.gaussians._rotation[selected_pts_mask].repeat(N,1)
+        new_features_dc = self.gaussians._features_dc[selected_pts_mask].repeat(N,1,1)
+        new_features_rest = self.gaussians._features_rest[selected_pts_mask].repeat(N,1,1)
+        new_opacity = self.gaussians._opacity[selected_pts_mask].repeat(N,1)
         new_deformation_table = self.model._deformation_table[selected_pts_mask].repeat(N)
 
         d = {"xyz": new_xyz,
@@ -202,21 +224,21 @@ class Gaussian4DTrainer(BaseTrainer):
         # Add points to the optimizer
         optimizable_tensors = self._cat_tensors_to_optimizer(d)
         # Update the 3D Gaussians
-        self.model.gaussians.update_points(optimizable_tensors)
+        self.gaussians.update_points(optimizable_tensors)
         # Update the deformation table
         self.model._deformation_table = torch.cat([self.model._deformation_table, new_deformation_table], -1)
         # Reset the gaussians statistics
-        self.model.gaussians._xyz_gradient_accum = torch.zeros((self.model.gaussians.get_xyz.shape[0], 1), device="cuda")
-        self.model.gaussians._max_radii2D = torch.zeros((self.model.gaussians.get_xyz.shape[0]), device="cuda")
+        self.gaussians._xyz_gradient_accum = torch.zeros((self.gaussians.get_xyz.shape[0], 1), device="cuda")
+        self.gaussians._max_radii2D = torch.zeros((self.gaussians.get_xyz.shape[0]), device="cuda")
         # Reset the deformation statistics
-        self.model._deformation_accum = torch.zeros((self.model.gaussians.get_xyz.shape[0], 3), device="cuda")
-        self.model._denom = torch.zeros((self.model.gaussians.get_xyz.shape[0], 1), device="cuda")
+        self.model._deformation_accum = torch.zeros((self.gaussians.get_xyz.shape[0], 3), device="cuda")
+        self.model._denom = torch.zeros((self.gaussians.get_xyz.shape[0], 1), device="cuda")
 
     def _densify_and_clone(self, grads, grad_threshold, scene_extent):
         # Get the mask
         grads_accum_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(grads_accum_mask,
-                                              torch.max(self.model.gaussians.get_scaling, dim=1).values <= self.percent_dense*scene_extent)      
+                                              torch.max(self.gaussians.get_scaling, dim=1).values <= self.percent_dense*scene_extent)      
         # Calculate new attributes
         new_xyz = self._xyz[selected_pts_mask] 
         new_features_dc = self._features_dc[selected_pts_mask]
@@ -265,3 +287,14 @@ class Gaussian4DTrainer(BaseTrainer):
             log[loss.__class__.__name__] += _loss.item() * batch_size
         for metric, _metric in zip(self.metric_fns, metrics):
             log[metric.__class__.__name__] += _metric.item() * batch_size
+
+    def save(self, save_dir, iteration, stage):
+        if stage == "coarse":
+            self.gaussians.save_ply(os.path.join(save_dir, "point_cloud", f"coarse_iteration_{iteration}", "point_cloud.ply"))
+            self.model.save_deformation(os.path.join(save_dir, "point_cloud", f"coarse_iteration_{iteration}"))
+        else:
+            self.gaussians.save_ply(os.path.join(save_dir, "point_cloud", f"iteration_{iteration}", "point_cloud.ply"))
+            self.model.save_deformation(os.path.join(save_dir, "point_cloud", f"iteration_{iteration}"))
+
+    def load(self, pcl_path):
+        self.gaussians.load_ply()

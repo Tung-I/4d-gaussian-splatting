@@ -1,2 +1,2 @@
 from deformation import Deformation, deform_network
-from gaussian_model import GaussianModel
+from model.gaussian3d import GaussianModel

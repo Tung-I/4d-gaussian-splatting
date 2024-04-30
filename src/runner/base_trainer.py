@@ -22,17 +22,14 @@ class BaseTrainer:
         num_epochs (int): The total number of training epochs.
     """
     def __init__(self, device, train_dataloader, valid_dataloader,
-                 model, loss_fns, loss_weights, metric_fns, optimizer,
-                 lr_scheduler, logger, monitor, num_epochs):
+                 loss_fns, loss_weights, metric_fns,
+                 logger, monitor, num_epochs):
         self.device = device
         self.train_dataloader = train_dataloader
         self.valid_dataloader = valid_dataloader
-        self.model = model.to(device)
         self.loss_fns = [loss_fn.to(device) for loss_fn in loss_fns]
         self.loss_weights = torch.tensor(loss_weights, dtype=torch.float, device=device)
         self.metric_fns = [metric_fn.to(device) for metric_fn in metric_fns]
-        self.optimizer = optimizer
-        self.lr_scheduler = lr_scheduler
         self.logger = logger
         self.monitor = monitor
         self.num_epochs = num_epochs
@@ -40,10 +37,10 @@ class BaseTrainer:
         self.np_random_seeds = None
 
     def train(self):
-        """The training process.
-        """
         if self.np_random_seeds is None:
             self.np_random_seeds = random.sample(range(10000000), k=self.num_epochs)
+
+        self._training_setup()  # Implement the training setup in the subclass.
 
         while self.epoch <= self.num_epochs:
             # Reset the numpy random seed.
@@ -99,7 +96,6 @@ class BaseTrainer:
         """Run an epoch for training.
         Args:
             mode (str): The mode of running an epoch ('training' or 'validation').
-
         Returns:
             log (dict): The log information.
             batch (dict or sequence): The last batch of the data.
@@ -120,6 +116,7 @@ class BaseTrainer:
             batch = self._allocate_data(batch)
             inputs, targets = self._get_inputs_targets(batch)
             if mode == 'training':
+                # Implement the run function in the subclass.
                 outputs = self._run(inputs)
                 losses = self._compute_losses(outputs, targets)
                 loss = (torch.stack(losses) * self.loss_weights).sum()
@@ -141,6 +138,11 @@ class BaseTrainer:
         for key in log:
             log[key] /= count
         return log, batch, outputs
+
+    def _training_setup(self):
+        """Setup the training.
+        """
+        raise NotImplementedError
 
     def _run(self, inputs):
         """Run the model.
@@ -202,13 +204,7 @@ class BaseTrainer:
         Returns:
             log (dict): The initialized log.
         """
-        log = {}
-        log['Loss'] = 0
-        for loss_fn in self.loss_fns:
-            log[loss_fn.__class__.__name__] = 0
-        for metric_fn in self.metric_fns:
-            log[metric_fn.__class__.__name__] = 0
-        return log
+        raise NotImplementedError
 
     def _update_log(self, log, batch_size, loss, losses, metrics):
         """Update the log.
@@ -219,38 +215,18 @@ class BaseTrainer:
             losses (sequence of torch.Tensor): The computed losses.
             metrics (sequence of torch.Tensor): The computed metrics.
         """
-        log['Loss'] += loss.item() * batch_size
-        for loss_fn, loss in zip(self.loss_fns, losses):
-            log[loss_fn.__class__.__name__] += loss.item() * batch_size
-        for metric_fn, metric in zip(self.metric_fns, metrics):
-            log[metric_fn.__class__.__name__] += metric.item() * batch_size
+        raise NotImplementedError
 
     def save(self, path):
         """Save the model checkpoint.
         Args:
             path (Path): The path to save the model checkpoint.
         """
-        torch.save({
-            'model': self.model.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-            'lr_scheduler': self.lr_scheduler.state_dict() if self.lr_scheduler else None,
-            'monitor': self.monitor,
-            'epoch': self.epoch,
-            'random_state': random.getstate(),
-            'np_random_seeds': self.np_random_seeds
-        }, path)
+        raise NotImplementedError
 
     def load(self, path):
         """Load the model checkpoint.
         Args:
             path (Path): The path to load the model checkpoint.
         """
-        checkpoint = torch.load(path, map_location=self.device)
-        self.model.load_state_dict(checkpoint['model'])
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
-        if checkpoint['lr_scheduler']:
-            self.lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        self.monitor = checkpoint['monitor']
-        self.epoch = checkpoint['epoch'] + 1
-        random.setstate(checkpoint['random_state'])
-        self.np_random_seeds = checkpoint['np_random_seeds']
+        raise NotImplementedError

@@ -8,7 +8,15 @@ dataset:
     kwargs:
         data_dir: '/home/ubuntu/datasets/dynerf/cook_spinach/'
         extension: ".png"
-
+        downsample: 1.0
+        is_stack: true
+        N_vis: -1
+        time_scale: 1.0
+        scene_bbox_min: [-2.5, -2.0, -1.0]
+        scene_bbox_max: [2.5, 2.0, 1.0]
+        bd_factor: 0.75
+        eval_step: 1
+        eval_index: 0
             
 dataloader:
     name: 'Dataloader'
@@ -54,6 +62,7 @@ net:
         grid_pe: 0
         static_mlp: False
         apply_rotation: False
+        maxtime: 300
        
         
 losses:
