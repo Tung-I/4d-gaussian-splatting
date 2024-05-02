@@ -21,12 +21,9 @@ class BaseTrainer:
         monitor (Monitor): The object to determine whether to save the checkpoint.
         num_epochs (int): The total number of training epochs.
     """
-    def __init__(self, device, train_dataloader, valid_dataloader,
-                 loss_fns, loss_weights, metric_fns,
+    def __init__(self, device, loss_fns, loss_weights, metric_fns,
                  logger, monitor, num_epochs):
         self.device = device
-        self.train_dataloader = train_dataloader
-        self.valid_dataloader = valid_dataloader
         self.loss_fns = [loss_fn.to(device) for loss_fn in loss_fns]
         self.loss_weights = torch.tensor(loss_weights, dtype=torch.float, device=device)
         self.metric_fns = [metric_fn.to(device) for metric_fn in metric_fns]

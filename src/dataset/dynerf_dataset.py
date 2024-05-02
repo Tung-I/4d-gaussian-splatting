@@ -7,7 +7,6 @@ from PIL import Image
 from torchvision import transforms as T
 from typing import NamedTuple
 import torchvision.transforms as transforms
-from plyfile import PlyData, PlyElement
 
 from src.dataset.base_dataset import BaseDataset
 from src.utils.general_utils import get_spiral
@@ -30,34 +29,6 @@ class CameraInfo(NamedTuple):
     time : float
     mask: np.array
 
-def getNerfppNorm(cam_info):
-    def get_center_and_diag(cam_centers):
-        cam_centers = np.hstack(cam_centers)
-        avg_cam_center = np.mean(cam_centers, axis=1, keepdims=True)
-        center = avg_cam_center
-        dist = np.linalg.norm(cam_centers - center, axis=0, keepdims=True)
-        diagonal = np.max(dist)
-        return center.flatten(), diagonal
-    
-    cam_centers = []
-    for cam in cam_info:
-        W2C = getWorld2View2(cam.R, cam.T)
-        C2W = np.linalg.inv(W2C)
-        cam_centers.append(C2W[:3, 3:4])
-    center, diagonal = get_center_and_diag(cam_centers)
-    radius = diagonal * 1.1
-    translate = -center
-
-    return {"translate": translate, "radius": radius}
-
-def fetchPly(path):
-    plydata = PlyData.read(path)
-    vertices = plydata['vertex']
-    positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
-    colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
-    normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
-    return BasicPointCloud(points=positions, colors=colors, normals=normals)
-
 class DynerfDataset(BaseDataset):
     """
     """
@@ -77,7 +48,7 @@ class DynerfDataset(BaseDataset):
         self.img_wh = (
             int(1352 / self.downsample),
             int(1014 / self.downsample),
-        )  # According to the neural 3D paper, the default resolution is 1024x768
+        )  
         self.downsample = 2704 / self.img_wh[0]
         self.scene_bbox = torch.tensor([self.scene_bbox_min, self.scene_bbox_max])
         self.world_bound_scale = 1.1
@@ -107,39 +78,46 @@ class DynerfDataset(BaseDataset):
 
         
     def load_meta(self):
-        # Read poses and video file paths.
+        # Get dataset poses 
         poses_arr = np.load(os.path.join(self.data_dir, "poses_bounds.npy"))
         poses = poses_arr[:, :-2].reshape([-1, 3, 5])  # (N_cams, 3, 5)
         self.near_fars = poses_arr[:, -2:]
-        videos = glob.glob(os.path.join(self.root_dir, "cam*.mp4"))
-        videos = sorted(videos)
-        assert len(videos) == poses_arr.shape[0]
         H, W, focal = poses[0, :, -1]
         focal = focal / self.downsample
         self.focal = [focal, focal]
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
+        self.poses_all = poses
 
-        # Get the validation poses.
+        # Get video paths
+        videos = glob.glob(os.path.join(self.root_dir, "cam*.mp4"))
+        videos = sorted(videos)
+        assert len(videos) == poses_arr.shape[0]
+        
+        # Get the validation poses
         N_views = self.segment_length
         countss = N_views
         self.val_poses = get_spiral(poses, self.near_fars, N_views=N_views)  # (60, 4, 4)
 
-        # Get the training split
+        # Get the training poses
         poses_i_train = []
         for i in range(len(poses)):
             if i != self.eval_index:
                 poses_i_train.append(i)
         self.poses = poses[poses_i_train]
-        self.poses_all = poses
+
+        
         self.image_paths, self.image_poses, self.image_times = self.load_images_path(videos, self.split, countss)
 
-
     def load_images_path(self, videos, split, countss):
+        """
+        videos: list of video paths
+        split: train or test
+        countss: number of images to sample from each video
+        """
         image_paths = []
         image_poses = []
         image_times = []
         N_cams = 0
-        N_time = 0
 
         for index, video_path in enumerate(videos):
             if index == self.eval_index:

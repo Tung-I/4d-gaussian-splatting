@@ -4,7 +4,7 @@ main:
     exp_name: null
 
 dataset:
-    name: 'DynerfDataset'
+    name: 'Scene'
     kwargs:
         data_dir: '/home/ubuntu/datasets/dynerf/cook_spinach/'
         extension: ".png"
@@ -17,21 +17,15 @@ dataset:
         bd_factor: 0.75
         eval_step: 1
         eval_index: 0
-            
-dataloader:
-    name: 'Dataloader'
-    kwargs:
-        train_batch_size: 1
-        valid_batch_size: 1
-        shuffle: true
-        num_workers: 8
 
 gaussians:
-    sh_degree: 3
-    white_background: true
+    name: 'GaussianModel'
+    kwargs:
+        sh_degree: 3
+        percent_dense: 0.01
 
 net:
-    name: '4DGS'
+    name: 'DeformationFields'
     kwargs:
         net_width: 128
         timebase_pe: 4
@@ -63,14 +57,6 @@ net:
         static_mlp: False
         apply_rotation: False
         maxtime: 300
-       
-        
-losses:
-    - name: 'DiceLoss'
-      weight: 1.0
-
-metrics:
-    - name: 'Dice'
 
 optimizer:
     position_lr_init: 0.00016
@@ -86,7 +72,6 @@ optimizer:
     opacity_lr: 0.05
     scaling_lr: 0.005
     rotation_lr: 0.001
-    percent_dense: 0.01
     lambda_dssim: 0
     lambda_lpips: 0
     weight_constraint_init: 1
@@ -123,13 +108,18 @@ trainer:
     name: '4DGSTrainer'
     kwargs:
         device: 'cuda'
-        num_epochs: 10000
+        num_iter: 14000
         lazy_level: 0
         test_iterations: [3000, 7000, 14000]
         save_iterations: [14000]
-        iterations: 14000
-        coarse_iterations: 3000
+        coarse_iteration: 3000
         add_point: False
         zerostamp_init: False
         custom_sampler: null
+        batch_size: 1
+        shuffle: true
+        num_workers: 8
+        white_background: true
+        convert_SHs_python: false
+        compute_cov3D_python: false
 
