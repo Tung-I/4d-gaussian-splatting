@@ -31,12 +31,10 @@ class DeformationFields(nn.Module):
         ).to("cuda") 
         self.deformation_accum = None
         self.deformation_table = None
-        self.denom = None
 
     def training_setup(self, n_points):
         self.deformation_accum = torch.zeros((n_points, 3), device="cuda")
         self.deformation_table = torch.gt(torch.ones((n_points), device="cuda"), 0)
-        self.denom = torch.zeros((n_points, 1), device="cuda")
 
     def load_model(self, model_dir, n_points):
         """ Load deformation, deformation_table, deformation_accum
@@ -100,3 +98,4 @@ class DeformationFields(nn.Module):
         return plane_tv_weight*self.plane_regulation() + \
             time_smoothness_weight*self.time_regulation() + \
             l1_time_planes_weight*self.l1_regulation()
+    

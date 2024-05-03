@@ -17,7 +17,7 @@ def main(args):
     # Load config file
     logging.info(f'Load the config from "{args.config_path}".')
     config = Box.from_yaml(filename=args.config_path)
-    saved_dir = Path(config.main.saved_dir)
+    saved_dir = Path(config.trainer.saved_dir)
     if not saved_dir.is_dir():
         saved_dir.mkdir(parents=True)
     logging.info(f'Save the config to "{config.main.saved_dir}".')

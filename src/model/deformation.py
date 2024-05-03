@@ -11,25 +11,33 @@ import torch.nn.functional as F
 import torch.nn.init as init
 from utils.graphics_utils import batch_quaternion_multiply
 from hexplane import HexPlaneField
+from src.model.grid import DenseGrid
 
 
 class Deformation(nn.Module):
-    def __init__(self, D=8, W=256, input_ch=27, input_ch_time=9, grid_pe=0, no_grid=None, 
-                 empty_voxel=None, static_mlp=None, bounds=None, kplanes_config=None, multires=False):
+    def __init__(self, D=8, W=256, input_ch=27, input_ch_time=9, grid_pe=0, skips=[],
+                 no_grid=False, bounds=1.6, kplanes_config={}, multires=[], empty_voxel=False, static_mlp=False):
         super(Deformation, self).__init__()
         self.D = D
         self.W = W
         self.input_ch = input_ch
         self.input_ch_time = input_ch_time
+        self.skips = skips
         self.grid_pe = grid_pe
+        self.no_grid = no_grid
         self.grid = HexPlaneField(bounds, kplanes_config, multires)
-        self.ratio=0
-        self.no_grd = no_grid
-        self.static_mlp = static_mlp
         self.bounds = bounds
         self.kplanes_config = kplanes_config
         self.multires = multires
-        
+        self.empty_voxel = empty_voxel
+        self.static_mlp = static_mlp
+
+        if self.empty_voxel:
+            self.empty_voxel = DenseGrid(channels=1, world_size=[64,64,64])
+        if self.static_mlp:
+            self.static_mlp = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1))
+
+        self.ratio=0
         self.create_net()
 
     @property
@@ -161,19 +169,41 @@ class Deformation(nn.Module):
     
 
 class deform_network(nn.Module):
-    def __init__(self, net_width, timebase_pe, defor_depth, posbase_pe, scale_rotation_pe, opacity_pe, timenet_width, timenet_output, grid_pe, deform_network=None) :
+    def __init__(self, **kwargs):
         super(deform_network, self).__init__()    
-        times_ch = 2*timebase_pe + 1
+        self.net_width = kwargs['net_width']
+        self.timebase_pe = kwargs['timebase_pe']
+        self.defor_depth = kwargs['defor_depth']
+        self.posbase_pe = kwargs['posbase_pe']
+        self.scale_rotation_pe = kwargs['scale_rotation_pe']
+        self.opacity_pe = kwargs['opacity_pe']
+        self.timenet_width = kwargs['timenet_width']
+        self.timenet_output = kwargs['timenet_output']
+        self.grid_pe = kwargs['grid_pe']
+        self.no_grid = kwargs['no_grid']
+        self.bounds = kwargs['bounds']
+        self.kplanes_config = kwargs['kplanes_config']
+        self.multires = kwargs['multires']
+        self.empty_voxel = kwargs['empty_voxel']
+        self.static_mlp = kwargs['static_mlp']
+
+        times_ch = 2*self.timebase_pe + 1
+
         self.timenet = nn.Sequential(
-            nn.Linear(times_ch, timenet_width), nn.ReLU(),
-            nn.Linear(timenet_width, timenet_output)
+            nn.Linear(times_ch, self.timenet_width), nn.ReLU(),
+            nn.Linear(self.timenet_width, self.timenet_output)
         )
-        self.deformation_net = Deformation(W=net_width, D=defor_depth, input_ch=(3)+(3*(posbase_pe))*2,
-                                           grid_pe=grid_pe, input_ch_time=timenet_output, args=args)
-        self.register_buffer('time_poc', torch.FloatTensor([(2**i) for i in range(timebase_pe)]))
-        self.register_buffer('pos_poc', torch.FloatTensor([(2**i) for i in range(posbase_pe)]))
-        self.register_buffer('rotation_scaling_poc', torch.FloatTensor([(2**i) for i in range(scale_rotation_pe)]))
-        self.register_buffer('opacity_poc', torch.FloatTensor([(2**i) for i in range(opacity_pe)]))
+
+        self.deformation_net = Deformation(W=self.net_width, D=self.defor_depth, 
+                                           input_ch=(3)+(3*(self.posbase_pe))*2, grid_pe=self.grid_pe, 
+                                           input_ch_time=self.timenet_output, no_grid=self.no_grid, 
+                                           bounds=self.bounds, kplanes_config=self.kplanes_config, 
+                                           multires=self.multires, empty_voxel=self.empty_voxel, 
+                                           static_mlp=self.static_mlp)
+        self.register_buffer('time_poc', torch.FloatTensor([(2**i) for i in range(self.timebase_pe)]))
+        self.register_buffer('pos_poc', torch.FloatTensor([(2**i) for i in range(self.posbase_pe)]))
+        self.register_buffer('rotation_scaling_poc', torch.FloatTensor([(2**i) for i in range(self.scale_rotation_pe)]))
+        self.register_buffer('opacity_poc', torch.FloatTensor([(2**i) for i in range(self.opacity_pe)]))
         self.apply(initialize_weights)
         # print(self)
 
