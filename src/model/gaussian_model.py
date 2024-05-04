@@ -66,24 +66,31 @@ class GaussianModel:
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
-       
+    
+    @property
     def get_scaling(self):
         return self.scaling_activation(self._scaling)
-
+    @property
     def get_rotation(self):
         return self.rotation_activation(self._rotation)
-    
+    @property
     def get_xyz(self):
         return self._xyz
-    
+    @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
-    
+    @property
+    def get_spatial_lr_scale(self):
+        return self.spatial_lr_scale
+    @property
+    def get_features(self):
+        features_dc = self._features_dc
+        features_rest = self._features_rest
+        return torch.cat((features_dc, features_rest), dim=1)
+
+
     def get_covariance(self, scaling_modifier=1):
         return self.build_covariance_from_scaling_rotation(self.get_scaling, scaling_modifier, self._rotation)
-    
-    def get_spatial_lr_scale(self):
-        return self._spatial_lr_scale
 
     def training_setup(self):
         # Called after create_from_pcd

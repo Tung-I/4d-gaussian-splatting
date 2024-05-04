@@ -9,8 +9,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-from utils.graphics_utils import batch_quaternion_multiply
-from hexplane import HexPlaneField
+from src.utils.graphics_utils import batch_quaternion_multiply
+from src.model.hexplane import HexPlaneField
 from src.model.grid import DenseGrid
 
 
@@ -168,13 +168,13 @@ class Deformation(nn.Module):
         return parameter_list
     
 
-class deform_network(nn.Module):
-    def __init__(self, **kwargs):
-        super(deform_network, self).__init__()    
+class deform_fields(nn.Module):
+    def __init__(self, kwargs):
+        super(deform_fields, self).__init__()    
         self.net_width = kwargs['net_width']
         self.timebase_pe = kwargs['timebase_pe']
         self.defor_depth = kwargs['defor_depth']
-        self.posbase_pe = kwargs['posbase_pe']
+        self.posebase_pe = kwargs['posebase_pe']
         self.scale_rotation_pe = kwargs['scale_rotation_pe']
         self.opacity_pe = kwargs['opacity_pe']
         self.timenet_width = kwargs['timenet_width']
@@ -195,17 +195,16 @@ class deform_network(nn.Module):
         )
 
         self.deformation_net = Deformation(W=self.net_width, D=self.defor_depth, 
-                                           input_ch=(3)+(3*(self.posbase_pe))*2, grid_pe=self.grid_pe, 
+                                           input_ch=(3)+(3*(self.posebase_pe))*2, grid_pe=self.grid_pe, 
                                            input_ch_time=self.timenet_output, no_grid=self.no_grid, 
                                            bounds=self.bounds, kplanes_config=self.kplanes_config, 
                                            multires=self.multires, empty_voxel=self.empty_voxel, 
                                            static_mlp=self.static_mlp)
         self.register_buffer('time_poc', torch.FloatTensor([(2**i) for i in range(self.timebase_pe)]))
-        self.register_buffer('pos_poc', torch.FloatTensor([(2**i) for i in range(self.posbase_pe)]))
+        self.register_buffer('pos_poc', torch.FloatTensor([(2**i) for i in range(self.posebase_pe)]))
         self.register_buffer('rotation_scaling_poc', torch.FloatTensor([(2**i) for i in range(self.scale_rotation_pe)]))
         self.register_buffer('opacity_poc', torch.FloatTensor([(2**i) for i in range(self.opacity_pe)]))
         self.apply(initialize_weights)
-        # print(self)
 
     def forward(self, point, scales=None, rotations=None, opacity=None, shs=None, times_sel=None):
         return self.forward_dynamic(point, scales, rotations, opacity, shs, times_sel)

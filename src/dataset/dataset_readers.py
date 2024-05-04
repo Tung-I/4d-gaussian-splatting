@@ -12,24 +12,19 @@
 import os
 import sys
 from PIL import Image
-from src.utils.camera import Camera
+from src.scene.camera import Camera
 from typing import NamedTuple
-# from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
-#     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
-# from scene.hyper_loader import Load_hyper_data, format_hyper_data
 import torchvision.transforms as transforms
-import copy
-from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 import numpy as np
 import torch
 import json
 from pathlib import Path
 from plyfile import PlyData, PlyElement
-from utils.sh_utils import SH2RGB
+from src.utils.sh_utils import SH2RGB
 from src.utils.graphics_utils import BasicPointCloud
-from utils.general_utils import PILtoTorch
-from tqdm import tqdm
 from src.dataset.neural_3D_dataset_NDC import Neural3D_NDC_Dataset
+from src.utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
+from tqdm import tqdm
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -167,7 +162,7 @@ def readdynerfInfo(**kwargs):
     )
 
     # Extract the NDC dataset information as CameraInfo object
-    train_cam_infos = format_infos(train_dataset," train")
+    train_cam_infos = format_infos(train_dataset, "train")
     val_cam_infos = format_render_poses(test_dataset.val_poses, test_dataset)
     nerf_normalization = getNerfppNorm(train_cam_infos)
 

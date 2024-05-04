@@ -1,5 +1,5 @@
 import torch
-from scene import Scene
+from src.scene import Scene
 
 def psnr(img1, img2, mask=None):
     if mask is not None:

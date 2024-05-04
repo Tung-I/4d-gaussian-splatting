@@ -13,7 +13,7 @@ import torch
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from src.model.gaussian_model import GaussianModel
-from utils.sh_utils import eval_sh
+from src.utils.sh_utils import eval_sh
 from time import time as get_time
 
 

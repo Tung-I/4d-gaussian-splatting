@@ -13,7 +13,7 @@ class Scene:
         self.video_cameras = {}
 
         # Create the SceneInfo object that includes PCs, NDC dataset, maxtime
-        scene_info = sceneLoadTypeCallbacks["dynerf"](kwargs)
+        scene_info = sceneLoadTypeCallbacks["dynerf"](**kwargs)
         self.maxtime = scene_info.maxtime
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
@@ -29,8 +29,8 @@ class Scene:
         self.deforms = deforms
         self.maxtime = scene_info.maxtime
         self.cameras_extent = scene_info.nerf_normalization["radius"]
-        self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent, self.maxtime)
-        self.deforms.deformation_net.set_aabb(xyz_max, xyz_min)
+        self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+        self.deforms.deformation_fields.deformation_net.set_aabb(xyz_max, xyz_min)
 
 
     def save(self, model_path, iteration, stage):

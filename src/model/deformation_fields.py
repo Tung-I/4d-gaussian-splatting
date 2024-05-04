@@ -2,33 +2,24 @@ import os
 import torch
 from torch import nn
 import numpy as np
-from deformation import deform_network
-from utils.plane_utils import compute_plane_smoothness
-from utils.sh_utils import RGB2SH
+from src.model.deformation import deform_fields
+from src.utils.plane_utils import compute_plane_smoothness
+from src.utils.sh_utils import RGB2SH
 
 class DeformationFields(nn.Module):
     def __init__(self, **kwargs):
+        super(DeformationFields, self).__init__()  
         self.net_width = kwargs['net_width']
         self.timebase_pe = kwargs['timebase_pe']
         self.defor_depth = kwargs['defor_depth']
-        self.posbase_pe = kwargs['posbase_pe']
+        self.posebase_pe = kwargs['posebase_pe']
         self.scale_rotation_pe = kwargs['scale_rotation_pe']
         self.opacity_pe = kwargs['opacity_pe']
         self.timenet_width = kwargs['timenet_width']
         self.timenet_output = kwargs['timenet_output']
         self.grid_pe = kwargs['grid_pe']
 
-        self.deformation_net = deform_network(
-            self.net_width, 
-            self.timebase_pe, 
-            self.defor_depth, 
-            self.posbase_pe, 
-            self.scale_rotation_pe, 
-            self.opacity_pe, 
-            self.timenet_width, 
-            self.timenet_output, 
-            self.grid_pe
-        ).to("cuda") 
+        self.deformation_fields = deform_fields(kwargs).to("cuda") 
         self.deformation_accum = None
         self.deformation_table = None
 
@@ -58,7 +49,7 @@ class DeformationFields(nn.Module):
         self.deformation_table = torch.gt(self.deformation_accum.max(dim=-1).values/100, threshold)
 
     def plane_regulation(self):
-        multi_res_grids = self.deformation.deformation_net.grid.grids
+        multi_res_grids = self.deformation_fields.deformation_net.grid.grids
         # 6 x [1, rank * F_dim, reso, reso]
         total = 0
         for grids in multi_res_grids:
@@ -71,7 +62,7 @@ class DeformationFields(nn.Module):
         return total
     
     def time_regulation(self):
-        multi_res_grids = self.deformation.deformation_net.grid.grids
+        multi_res_grids = self.deformation_fields.deformation_net.grid.grids
         total = 0
         for grids in multi_res_grids:
             if len(grids) == 3:
@@ -83,7 +74,7 @@ class DeformationFields(nn.Module):
         return total
     
     def l1_regulation(self):
-        multi_res_grids = self.deformation.deformation_net.grid.grids
+        multi_res_grids = self.deformation_fields.deformation_net.grid.grids
         total = 0.0
         for grids in multi_res_grids:
             if len(grids) == 3:

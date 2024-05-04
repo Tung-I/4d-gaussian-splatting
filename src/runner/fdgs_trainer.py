@@ -9,7 +9,7 @@ from src.utils.graphics_utils import build_rotation
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from gaussian_renderer import render
+from src.gaussian_renderer import render
 from src.model.losses import l1_loss, ssim
 from src.model.metrics import psnr
 from src.utils.general_utils import Timer
@@ -17,26 +17,34 @@ from src.logger.fdgs_logger import training_report
 
 
 class Gaussian4DTrainer:
-    def __init__(self, device, saved_dir, num_iter, lazy_level, 
-                 test_iterations, save_iterations, ckpt_iterations, coarse_iteration, 
-                 batch_size, shuffle, num_workers, white_background,
-                 convert_SHs_python, compute_cov3D_python,
-                 loss_fns, loss_weights, metric_fns, logger, monitor,
-                 optimizer_kwargs, scene):
-        self.device = device
-        self.saved_dir = saved_dir
-        self.lazy_level = lazy_level
-        self.test_iterations = test_iterations
-        self.save_iterations = save_iterations
-        self.ckpt_iterations = ckpt_iterations
-        self.coarse_iteration = coarse_iteration
-        self.loss_fns = [loss_fn.to(device) for loss_fn in loss_fns]
-        self.loss_weights = torch.tensor(loss_weights, dtype=torch.float, device=device)
-        self.metric_fns = [metric_fn.to(device) for metric_fn in metric_fns]
-        self.logger = logger
-        self.monitor = monitor
-        self.num_iter = num_iter
+    def __init__(self, scene, **kwargs):
+        trainer_kwargs = kwargs['trainer_kwargs']  
+        renderer_kwargs = kwargs['renderer_kwargs']
+        optimizer_kwargs = kwargs['optimizer_kwargs']
+
+        self.scene = scene
+        self.gaussians = scene.gaussians
+        self.deforms = scene.deforms
+        self.spatial_lr_scale = self.gaussians.get_spatial_lr_scale
+
+        self.device = trainer_kwargs['device']
+        self.saved_dir = trainer_kwargs['saved_dir']
+        self.lazy_level = trainer_kwargs['lazy_level']
+        self.test_iterations = trainer_kwargs['test_iterations']
+        self.save_iterations = trainer_kwargs['save_iterations']
+        self.ckpt_iterations = trainer_kwargs['ckpt_iterations']
+        self.coarse_iteration = trainer_kwargs['coarse_iteration']
+        self.batch_size = trainer_kwargs['batch_size']
+        self.shuffle = trainer_kwargs['shuffle']
+        self.num_iter = trainer_kwargs['num_iter']
+        self.num_workers = trainer_kwargs['num_workers']
         self.iter = 1
+
+        self.white_background = renderer_kwargs['white_background']
+        self.convert_SHs_python = renderer_kwargs['convert_SHs_python']
+        self.compute_cov3D_python = renderer_kwargs['compute_cov3D_python']
+        bg_color = [1, 1, 1] if self.white_background else [0, 0, 0]
+        self.background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
         self.position_lr_init = optimizer_kwargs['position_lr_init']
         self.position_lr_final = optimizer_kwargs['position_lr_final']
@@ -47,7 +55,6 @@ class Gaussian4DTrainer:
         self.deformation_lr_delay_mult = optimizer_kwargs['deformation_lr_delay_mult']
         self.grid_lr_init = optimizer_kwargs['grid_lr_init']
         self.grid_lr_final = optimizer_kwargs['grid_lr_final']
-        self.grid_lr_delay_mult = optimizer_kwargs['grid_lr_delay_mult']
         self.feature_lr = optimizer_kwargs['feature_lr']
         self.opacity_lr = optimizer_kwargs['opacity_lr']
         self.scaling_lr = optimizer_kwargs['scaling_lr']
@@ -56,45 +63,32 @@ class Gaussian4DTrainer:
         self.plane_tv_weight = optimizer_kwargs['plane_tv_weight']
         self.l1_time_planes = optimizer_kwargs['l1_time_planes']
         self.lambda_dssim = optimizer_kwargs['lambda_dssim']
-        
-        self.optimizer = None
-
-        self.train_cameras = {}
-        self.test_cameras = {}
-        self.video_cameras = {}
-
-        self.scene = scene
-        self.gaussians = scene.gaussians
-        self.deforms = scene.deforms
-        self.spatial_lr_scale = self.gaussians.get_spatial_lr_scale()
-
-        # Prepare the dataloader
-        self.batch_size = batch_size
-        self.shuffle = shuffle
-        self.num_workers = num_workers
-        viewpoint_stack = self.scene.getTrainCameras()
-        viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=self.batch_size, 
-                                            shuffle=self.shuffle, num_workers=self.num_workers, collate_fn=list)
-        self.random_loader = True
-        self.dataloader = iter(viewpoint_stack_loader)
-        bg_color = [1, 1, 1] if white_background else [0, 0, 0]
-        self.background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-        self.convert_SHs_python = convert_SHs_python
-        self.compute_cov3D_python = compute_cov3D_python
-
-        self.tb_writer = SummaryWriter(self.saved_dir)
-
         self.densify_from_iter = optimizer_kwargs['densify_from_iter']
         self.densify_until_iter = optimizer_kwargs['densify_until_iter']
         self.densify_grad_threshold_coarse = optimizer_kwargs['densify_grad_threshold_coarse']
         self.densify_grad_threshold_fine_init = optimizer_kwargs['densify_grad_threshold_fine_init']
-        self.densify_grad_threshold_fine_after = optimizer_kwargs['densify_grad_threshold_fine_after']
+        self.densify_grad_threshold_after = optimizer_kwargs['densify_grad_threshold_after']
         self.prunin_from_iter = optimizer_kwargs['pruning_from_iter']
         self.pruning_interval = optimizer_kwargs['pruning_interval']
         self.opacity_threshold_coarse = optimizer_kwargs['opacity_threshold_coarse']
         self.opacity_threshold_fine_init = optimizer_kwargs['opacity_threshold_fine_init']
         self.opacity_threshold_fine_after = optimizer_kwargs['opacity_threshold_fine_after']
+        self.spatial_lr_scale = self.gaussians.get_spatial_lr_scale
         
+        self.optimizer = None
+        self.train_cameras = {}
+        self.test_cameras = {}
+        self.video_cameras = {}
+
+        # Prepare the dataloader
+        viewpoint_stack = self.scene.getTrainCameras()
+        viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=self.batch_size, 
+                                            shuffle=self.shuffle, num_workers=self.num_workers, collate_fn=list)
+        self.random_loader = True
+        self.dataloader = iter(viewpoint_stack_loader)
+        
+        # Tensorboard writer
+        self.tb_writer = SummaryWriter(self.saved_dir)
 
     def train(self):
         timer = Timer()
@@ -254,12 +248,12 @@ class Gaussian4DTrainer:
 
     def _training_setup(self):
         self.gaussians.training_setup()
-        self.deforms.training_setup() 
+        self.deforms.training_setup(self.gaussians.get_xyz.shape[0]) 
 
         l = [
             {'params': [self.gaussians._xyz], 'lr': self.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
-            {'params': list(self.deforms.deformation.get_mlp_parameters()), 'lr': self.deformation_lr_init * self.spatial_lr_scale, "name": "deformation"},
-            {'params': list(self.deforms.deformation.get_grid_parameters()), 'lr': self.grid_lr_init * self.spatial_lr_scale, "name": "grid"},
+            {'params': list(self.deforms.deformation_fields.get_mlp_parameters()), 'lr': self.deformation_lr_init * self.spatial_lr_scale, "name": "deformation"},
+            {'params': list(self.deforms.deformation_fields.get_grid_parameters()), 'lr': self.grid_lr_init * self.spatial_lr_scale, "name": "grid"},
             {'params': [self.gaussians._features_dc], 'lr': self.feature_lr, "name": "f_dc"},
             {'params': [self.gaussians._features_rest], 'lr': self.feature_lr / 20.0, "name": "f_rest"},
             {'params': [self.gaussians._opacity], 'lr': self.opacity_lr, "name": "opacity"},
@@ -277,8 +271,8 @@ class Gaussian4DTrainer:
                                                     lr_final=self.deformation_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=self.deformation_lr_delay_mult,
                                                     max_steps=self.position_lr_max_steps)    
-        self.grid_scheduler_args = get_expon_lr_func(lr_init=self.grid_lr_init*self._spatial_lr_scale,
-                                                    lr_final=self.grid_lr_final*self._spatial_lr_scale,
+        self.grid_scheduler_args = get_expon_lr_func(lr_init=self.grid_lr_init*self.spatial_lr_scale,
+                                                    lr_final=self.grid_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=self.deformation_lr_delay_mult,
                                                     max_steps=self.position_lr_max_steps)    
         

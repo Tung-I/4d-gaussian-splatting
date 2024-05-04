@@ -1,8 +1,8 @@
 from torch.utils.data import Dataset
-from scene.cameras import Camera
-from utils.graphics_utils import focal2fov
+from src.scene.camera import Camera
+from src.utils.graphics_utils import focal2fov
 import torch
-from utils.graphics_utils import focal2fov
+
 
 class FourDGSdataset(Dataset):
     def __init__(self, dataset):

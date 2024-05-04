@@ -1,28 +1,60 @@
-main:
-    random_seed: 6666
-    exp_name: null
-
 trainer:
-    name: '4DGSTrainer'
+    name: 'Gaussian4DTrainer'
     kwargs:
-        device: 'cuda'
-        saved_dir: '/home/ubuntu/4d-gaussian-splatting/output/cook_spinach'
-        num_iter: 14000
-        lazy_level: 0
-        test_iterations: [3000, 7000, 14000]
-        save_iterations: [14000]
-        ckpt_iterations: []
-        coarse_iteration: 3000
-        add_point: False
-        zerostamp_init: False
-        custom_sampler: null
-        batch_size: 1
-        shuffle: true
-        num_workers: 8
-        white_background: true
-        convert_SHs_python: false
-        compute_cov3D_python: false
-
+        trainer_kwargs:
+            device: 'cuda'
+            saved_dir: '/home/ubuntu/4d-gaussian-splatting/output/cook_spinach'
+            loaded_path: null
+            num_iter: 14000
+            lazy_level: 0
+            test_iterations: [3000, 7000, 14000]
+            save_iterations: [14000]
+            ckpt_iterations: []
+            coarse_iteration: 3000
+            add_point: False
+            zerostamp_init: False
+            custom_sampler: null
+            batch_size: 1
+            shuffle: true
+            num_workers: 8
+        optimizer_kwargs:
+            position_lr_init: 0.00016
+            position_lr_final: 0.0000016
+            position_lr_delay_mult: 0.01
+            position_lr_max_steps: 20000
+            deformation_lr_init: 0.00016
+            deformation_lr_final: 0.000016
+            deformation_lr_delay_mult: 0.01
+            grid_lr_init: 0.0016
+            grid_lr_final: 0.00016
+            feature_lr: 0.0025
+            opacity_lr: 0.05
+            scaling_lr: 0.005
+            rotation_lr: 0.001
+            lambda_dssim: 0
+            lambda_lpips: 0
+            weight_constraint_init: 1
+            weight_constraint_after: 0.2
+            weight_decay_iteration: 5000
+            opacity_reset_interval: 60000
+            densification_interval: 100
+            densify_from_iter: 500
+            densify_until_iter: 10000
+            densify_grad_threshold_coarse: 0.0002
+            densify_grad_threshold_fine_init: 0.0002
+            densify_grad_threshold_after: 0.0002
+            pruning_from_iter: 500
+            pruning_interval: 100
+            opacity_threshold_coarse: 0.005
+            opacity_threshold_fine_init: 0.005
+            opacity_threshold_fine_after: 0.005
+            time_smoothness_weight: 0.001
+            plane_tv_weight: 0.0002
+            l1_time_planes: 0.0001
+        renderer_kwargs:
+            white_background: true
+            convert_SHs_python: false
+            compute_cov3D_python: false
 dataset:
     name: 'Scene'
     kwargs:
@@ -75,40 +107,7 @@ net:
         apply_rotation: False
         maxtime: 300
 
-optimizer:
-    position_lr_init: 0.00016
-    position_lr_final: 0.0000016
-    position_lr_delay_mult: 0.01
-    position_lr_max_steps: 20000
-    deformation_lr_init: 0.00016
-    deformation_lr_final: 0.000016
-    deformation_lr_delay_mult: 0.01
-    grid_lr_init: 0.0016
-    grid_lr_final: 0.00016
-    feature_lr: 0.0025
-    opacity_lr: 0.05
-    scaling_lr: 0.005
-    rotation_lr: 0.001
-    lambda_dssim: 0
-    lambda_lpips: 0
-    weight_constraint_init: 1
-    weight_constraint_after: 0.2
-    weight_decay_iteration: 5000
-    opacity_reset_interval: 60000
-    densification_interval: 100
-    densify_from_iter: 500
-    densify_until_iter: 10000
-    densify_grad_threshold_coarse: 0.0002
-    densify_grad_threshold_fine_init: 0.0002
-    densify_grad_threshold_after: 0.0002
-    pruning_from_iter: 500
-    pruning_interval: 100
-    opacity_threshold_coarse: 0.005
-    opacity_threshold_fine_init: 0.005
-    opacity_threshold_fine_after: 0.005
-    time_smoothness_weight: 0.001
-    plane_tv_weight: 0.0002
-    l1_time_planes: 0.0001
+
 
 
 

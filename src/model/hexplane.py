@@ -132,7 +132,7 @@ class HexPlaneField(nn.Module):
             else:
                 self.feat_dim = gp[-1].shape[1]
             self.grids.append(gp)
-        print("feature_dim:",self.feat_dim)
+        print("HexPlane: feature_dim:",self.feat_dim)
     @property
 
     def get_aabb(self):
@@ -144,7 +144,7 @@ class HexPlaneField(nn.Module):
             xyz_min
         ],dtype=torch.float32)
         self.aabb = nn.Parameter(aabb,requires_grad=False)
-        print("Voxel Plane: set aabb=",self.aabb)
+        print("HexPlane: set aabb=",self.aabb)
 
     def get_density(self, pts: torch.Tensor, timestamps: Optional[torch.Tensor] = None):
         """
