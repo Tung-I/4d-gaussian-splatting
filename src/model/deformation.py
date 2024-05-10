@@ -14,10 +14,10 @@ from src.model.hexplane import HexPlaneField
 from src.model.grid import DenseGrid
 
 
-class Deformation(nn.Module):
+class DeformationNet(nn.Module):
     def __init__(self, D=8, W=256, input_ch=27, input_ch_time=9, grid_pe=0, skips=[],
                  no_grid=False, bounds=1.6, kplanes_config={}, multires=[], empty_voxel=False, static_mlp=False):
-        super(Deformation, self).__init__()
+        super(DeformationNet, self).__init__()
         self.D = D
         self.W = W
         self.input_ch = input_ch
@@ -32,10 +32,18 @@ class Deformation(nn.Module):
         self.empty_voxel = empty_voxel
         self.static_mlp = static_mlp
 
+        self.no_dx = False
+        self.no_ds = False
+        self.no_dr = False
+        self.no_dir = False
+        self.no_do = False
+        self.no_dshs = False
+        self.apply_rotation = False
+
         if self.empty_voxel:
             self.empty_voxel = DenseGrid(channels=1, world_size=[64,64,64])
         if self.static_mlp:
-            self.static_mlp = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1))
+            self.static_mlp_nn = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1))
 
         self.ratio=0
         self.create_net()
@@ -101,22 +109,21 @@ class Deformation(nn.Module):
     
     def forward_dynamic(self, rays_pts_emb, scales_emb, rotations_emb, opacity_emb, shs_emb, time_feature, time_emb):
         hidden = self.query_time(rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb)
-        if self.args.static_mlp:
-            mask = self.static_mlp(hidden)
-        elif self.args.empty_voxel:
+        if self.static_mlp:
+            mask = self.static_mlp_nn(hidden)
+        elif self.empty_voxel:
             mask = self.empty_voxel(rays_pts_emb[:,:3])
         else:
             mask = torch.ones_like(opacity_emb[:,0]).unsqueeze(-1)
  
-        if self.args.no_dx:
+        if self.no_dx:
             pts = rays_pts_emb[:,:3]
         else:
             dx = self.pos_deform(hidden)
             pts = torch.zeros_like(rays_pts_emb[:,:3])
             pts = rays_pts_emb[:,:3]*mask + dx
 
-        if self.args.no_ds :
-            
+        if self.no_ds :
             scales = scales_emb[:,:3]
         else:
             ds = self.scales_deform(hidden)
@@ -124,18 +131,18 @@ class Deformation(nn.Module):
             scales = torch.zeros_like(scales_emb[:,:3])
             scales = scales_emb[:,:3]*mask + ds
             
-        if self.args.no_dr :
+        if self.no_dr:
             rotations = rotations_emb[:,:4]
         else:
             dr = self.rotations_deform(hidden)
 
             rotations = torch.zeros_like(rotations_emb[:,:4])
-            if self.args.apply_rotation:
+            if self.apply_rotation:
                 rotations = batch_quaternion_multiply(rotations_emb, dr)
             else:
                 rotations = rotations_emb[:,:4] + dr
 
-        if self.args.no_do :
+        if self.no_do :
             opacity = opacity_emb[:,:1] 
         else:
             do = self.opacity_deform(hidden) 
@@ -143,7 +150,7 @@ class Deformation(nn.Module):
             opacity = torch.zeros_like(opacity_emb[:,:1])
             opacity = opacity_emb[:,:1]*mask + do
 
-        if self.args.no_dshs:
+        if self.no_dshs:
             shs = shs_emb
         else:
             dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
@@ -168,9 +175,9 @@ class Deformation(nn.Module):
         return parameter_list
     
 
-class deform_fields(nn.Module):
+class DeformationFields(nn.Module):
     def __init__(self, kwargs):
-        super(deform_fields, self).__init__()    
+        super(DeformationFields, self).__init__()    
         self.net_width = kwargs['net_width']
         self.timebase_pe = kwargs['timebase_pe']
         self.defor_depth = kwargs['defor_depth']
@@ -194,7 +201,7 @@ class deform_fields(nn.Module):
             nn.Linear(self.timenet_width, self.timenet_output)
         )
 
-        self.deformation_net = Deformation(W=self.net_width, D=self.defor_depth, 
+        self.deformation_net = DeformationNet(W=self.net_width, D=self.defor_depth, 
                                            input_ch=(3)+(3*(self.posebase_pe))*2, grid_pe=self.grid_pe, 
                                            input_ch_time=self.timenet_output, no_grid=self.no_grid, 
                                            bounds=self.bounds, kplanes_config=self.kplanes_config, 
@@ -225,7 +232,7 @@ class deform_fields(nn.Module):
         point_emb = poc_fre(point, self.pos_poc)
         scales_emb = poc_fre(scales, self.rotation_scaling_poc)
         rotations_emb = poc_fre(rotations, self.rotation_scaling_poc)
-        means3D, scales, rotations, opacity, shs = self.deformation_net( point_emb,
+        means3D, scales, rotations, opacity, shs = self.deformation_net(point_emb,
                                                   scales_emb,
                                                 rotations_emb,
                                                 opacity,

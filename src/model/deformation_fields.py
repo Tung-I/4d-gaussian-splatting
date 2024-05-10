@@ -2,13 +2,13 @@ import os
 import torch
 from torch import nn
 import numpy as np
-from src.model.deformation import deform_fields
+from src.model.deformation import DeformationFields
 from src.utils.plane_utils import compute_plane_smoothness
 from src.utils.sh_utils import RGB2SH
 
-class DeformationFields(nn.Module):
+class DeformationFieldsWrapper(nn.Module):
     def __init__(self, **kwargs):
-        super(DeformationFields, self).__init__()  
+        super(DeformationFieldsWrapper, self).__init__()  
         self.net_width = kwargs['net_width']
         self.timebase_pe = kwargs['timebase_pe']
         self.defor_depth = kwargs['defor_depth']
@@ -19,11 +19,12 @@ class DeformationFields(nn.Module):
         self.timenet_output = kwargs['timenet_output']
         self.grid_pe = kwargs['grid_pe']
 
-        self.deformation_fields = deform_fields(kwargs).to("cuda") 
+        self.deformation_fields = DeformationFields(kwargs).to("cuda") 
         self.deformation_accum = None
         self.deformation_table = None
 
     def training_setup(self, n_points):
+        self.deformation_fields.to("cuda")
         self.deformation_accum = torch.zeros((n_points, 3), device="cuda")
         self.deformation_table = torch.gt(torch.ones((n_points), device="cuda"), 0)
 
@@ -41,7 +42,7 @@ class DeformationFields(nn.Module):
         print("loading deformation fields from {}".format(model_dir))
 
     def save_deformation(self, path):
-        torch.save(self.deformation.state_dict(),os.path.join(path, "deformation.pth"))
+        torch.save(self.deformation_fields.state_dict(),os.path.join(path, "deformation.pth"))
         torch.save(self.deformation_table,os.path.join(path, "deformation_table.pth"))
         torch.save(self.deformation_accum,os.path.join(path, "deformation_accum.pth"))
 

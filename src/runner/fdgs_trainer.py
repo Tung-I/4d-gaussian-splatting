@@ -26,6 +26,7 @@ class Gaussian4DTrainer:
         self.gaussians = scene.gaussians
         self.deforms = scene.deforms
         self.spatial_lr_scale = self.gaussians.get_spatial_lr_scale
+        self.iter = 1
 
         self.device = trainer_kwargs['device']
         self.saved_dir = trainer_kwargs['saved_dir']
@@ -38,7 +39,7 @@ class Gaussian4DTrainer:
         self.shuffle = trainer_kwargs['shuffle']
         self.num_iter = trainer_kwargs['num_iter']
         self.num_workers = trainer_kwargs['num_workers']
-        self.iter = 1
+        self.tb_log = trainer_kwargs['tb_log']
 
         self.white_background = renderer_kwargs['white_background']
         self.convert_SHs_python = renderer_kwargs['convert_SHs_python']
@@ -68,12 +69,14 @@ class Gaussian4DTrainer:
         self.densify_grad_threshold_coarse = optimizer_kwargs['densify_grad_threshold_coarse']
         self.densify_grad_threshold_fine_init = optimizer_kwargs['densify_grad_threshold_fine_init']
         self.densify_grad_threshold_after = optimizer_kwargs['densify_grad_threshold_after']
-        self.prunin_from_iter = optimizer_kwargs['pruning_from_iter']
+        self.pruning_from_iter = optimizer_kwargs['pruning_from_iter']
         self.pruning_interval = optimizer_kwargs['pruning_interval']
         self.opacity_threshold_coarse = optimizer_kwargs['opacity_threshold_coarse']
         self.opacity_threshold_fine_init = optimizer_kwargs['opacity_threshold_fine_init']
         self.opacity_threshold_fine_after = optimizer_kwargs['opacity_threshold_fine_after']
         self.spatial_lr_scale = self.gaussians.get_spatial_lr_scale
+        self.opacity_reset_interval = optimizer_kwargs['opacity_reset_interval']
+        self.densification_interval = optimizer_kwargs['densification_interval']
         
         self.optimizer = None
         self.train_cameras = {}
@@ -88,7 +91,10 @@ class Gaussian4DTrainer:
         self.dataloader = iter(viewpoint_stack_loader)
         
         # Tensorboard writer
-        self.tb_writer = SummaryWriter(self.saved_dir)
+        if self.tb_log:
+            self.tb_writer = SummaryWriter(self.saved_dir)
+
+        
 
     def train(self):
         timer = Timer()
@@ -104,9 +110,7 @@ class Gaussian4DTrainer:
 
         
         while self.iter <= self.num_iter:
-            print()
             iter_start.record()
-            logging.info(f'Iteration {self.iter}.')
             stage = "coarse" if self.iter <= self.coarse_iteration else "fine"
 
             train_outputs = self._run('training', stage=stage)
@@ -123,13 +127,11 @@ class Gaussian4DTrainer:
             image_tensor = torch.cat(images, 0)
             gt_image_tensor = torch.cat(gt_images, 0)
 
-            self._compute_losses(image_tensor, gt_image_tensor)
-            Ll1 = l1_loss(image_tensor, gt_image_tensor[:,:3,:,:])
-            psnr_ = psnr(image_tensor, gt_image_tensor).mean().double()
+            loss = self._compute_losses(image_tensor, gt_image_tensor)
+            psnr_ = self._compute_metrics(image_tensor, gt_image_tensor)
 
-            loss = Ll1
             if stage == "fine" and self.time_smoothness_weight != 0:
-                tv_loss = self.deformations.compute_regulation(self.time_smoothness_weight, self.l1_time_planes, self.plane_tv_weight)
+                tv_loss = self.deforms.compute_regulation(self.time_smoothness_weight, self.l1_time_planes, self.plane_tv_weight)
                 loss += tv_loss
             if self.lambda_dssim != 0:
                 ssim_loss = ssim(image_tensor,gt_image_tensor)
@@ -162,9 +164,11 @@ class Gaussian4DTrainer:
             # Perform logging, saving, and checkpointing 
             timer.pause()
             
-            render_kwargs = {"background": self.background, "convert_SHs_python": self.convert_SHs_python, "compute_cov3D_python": self.compute_cov3D_python}
-            training_report(self.tb_writer, self.iter, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), 
-                            self.test_iterations, self.scene, render, render_kwargs, stage, 'dynerf')
+            # Tensorboard logging
+            if self.tb_log:
+                render_kwargs = {"background": self.background, "convert_SHs_python": self.convert_SHs_python, "compute_cov3D_python": self.compute_cov3D_python}
+                training_report(self.tb_writer, self.iter, loss, iter_start.elapsed_time(iter_end), 
+                                self.test_iterations, self.scene, render, render_kwargs, stage, 'dynerf')
             if (self.iter in self.save_iterations):
                 print("\n[ITER {}] Saving Gaussians to {}".format(self.iter, self.saved_dir))
                 self.scene.save(self.saved_dir, self.iter, stage)
@@ -176,7 +180,6 @@ class Gaussian4DTrainer:
                 # Keep track of max radii in image-space for pruning
                 self.gaussians.max_radii2D[visibility_filter] = torch.max(self.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 self.gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter)
-                self.deforms.add_densification_stats(visibility_filter)
 
                 if stage == "coarse":
                     opacity_threshold = self.opacity_threshold_coarse
@@ -206,6 +209,8 @@ class Gaussian4DTrainer:
                 print("\n[ITER {}] Saving Checkpoint".format(self.iter))
                 torch.save((self.capture(), self.iter), self.saved_dir + "/ckpt" +f"_{stage}_" + str(self.iter) + ".pth")
 
+            self.iter += 1
+
 
     def _run(self, mode, stage=None):
         self._update_learning_rate(self.iter)
@@ -219,16 +224,20 @@ class Gaussian4DTrainer:
             viewpoint_cams = next(self.dataloader)
         except StopIteration:
             print("reset dataloader into random dataloader.")
-            if not self.random_loader:
-                viewpoint_stack = self.scene.getTrainCameras()
-                viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=self.batch_size, 
-                                            shuffle=self.shuffle, num_workers=self.num_workers, collate_fn=list)
+            # if not self.random_loader:
+            #     viewpoint_stack = self.scene.getTrainCameras()
+            #     viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=self.batch_size, 
+            #                                 shuffle=self.shuffle, num_workers=self.num_workers, collate_fn=list)
+            viewpoint_stack = self.scene.getTrainCameras()
+            viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=self.batch_size, 
+                                        shuffle=self.shuffle, num_workers=self.num_workers, collate_fn=list)
             self.dataloader = iter(viewpoint_stack_loader)
+            viewpoint_cams = next(self.dataloader)
         images, gt_images, radii_list, visibility_filter_list, viewspace_point_tensor_list = [], [], [], [], []
 
         # Batch processing of training viewpoints
         for viewpoint_cam in viewpoint_cams:
-            render_pkg = render(viewpoint_cam, self.scene.gaussians, self.background, stage=stage, cam_type="dynerf", 
+            render_pkg = render(viewpoint_cam, self.scene.gaussians, self.scene.deforms, self.background, stage=stage, cam_type="dynerf", 
                                 convert_SHs_python=self.convert_SHs_python, compute_cov3D_python=self.compute_cov3D_python)
             image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
             images.append(image.unsqueeze(0))
@@ -420,12 +429,12 @@ class Gaussian4DTrainer:
         selected_pts_mask = torch.logical_and(grads_accum_mask,
                                               torch.max(self.gaussians.get_scaling, dim=1).values <= self.gaussians.percent_dense*scene_extent)      
         # Calculate new attributes
-        new_xyz = self._xyz[selected_pts_mask] 
-        new_features_dc = self._features_dc[selected_pts_mask]
-        new_features_rest = self._features_rest[selected_pts_mask]
-        new_opacities = self._opacity[selected_pts_mask]
-        new_scaling = self._scaling[selected_pts_mask]
-        new_rotation = self._rotation[selected_pts_mask]
+        new_xyz = self.gaussians._xyz[selected_pts_mask] 
+        new_features_dc = self.gaussians._features_dc[selected_pts_mask]
+        new_features_rest = self.gaussians._features_rest[selected_pts_mask]
+        new_opacities = self.gaussians._opacity[selected_pts_mask]
+        new_scaling = self.gaussians._scaling[selected_pts_mask]
+        new_rotation = self.gaussians._rotation[selected_pts_mask]
         new_deformation_table = self.deforms.deformation_table[selected_pts_mask]
 
         d = {"xyz": new_xyz,
@@ -481,6 +490,14 @@ class Gaussian4DTrainer:
 
         self._densify_and_clone(grads, max_grad, extent)
         self._densify_and_split(grads, max_grad, extent)
+
+    def _compute_losses(self, image_tensor, gt_image_tensor):
+        Ll1 = l1_loss(image_tensor, gt_image_tensor[:,:3,:,:])
+        return Ll1
+    
+    def _compute_metrics(self, image_tensor, gt_image_tensor):
+        psnr_ = psnr(image_tensor, gt_image_tensor).mean().double()
+        return psnr_
 
 
     def _init_log(self):

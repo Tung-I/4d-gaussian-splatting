@@ -1,6 +1,9 @@
 import torch
 from src.scene import Scene
 
+def l1_loss(network_output, gt):
+    return torch.abs((network_output - gt)).mean()
+
 def psnr(img1, img2, mask=None):
     if mask is not None:
         img1 = img1.flatten(1)
@@ -24,10 +27,9 @@ def psnr(img1, img2, mask=None):
         
     return psnr
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, 
+def training_report(tb_writer, iteration, loss, elapsed, testing_iterations, 
                     scene : Scene, renderFunc, renderKwargs, stage, dataset_type):
     if tb_writer:
-        tb_writer.add_scalar(f'{stage}/train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar(f'{stage}/train_loss_patchestotal_loss', loss.item(), iteration)
         tb_writer.add_scalar(f'{stage}/iter_time', elapsed, iteration)
         
@@ -47,8 +49,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, background, stage=stage, cam_type=dataset_type, 
-                                                   convert_SHs_python=convert_SHs_python, compute_cov3D_python=compute_cov3D_python, background=background, **renderKwargs
+                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, scene.deforms, background, stage=stage, cam_type=dataset_type, 
+                                                   convert_SHs_python=convert_SHs_python, compute_cov3D_python=compute_cov3D_python
                                         )["render"], 0.0, 1.0)
                     if dataset_type == "PanopticSports":
                         gt_image = torch.clamp(viewpoint["image"].to("cuda"), 0.0, 1.0)

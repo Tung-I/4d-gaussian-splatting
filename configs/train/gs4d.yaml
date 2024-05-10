@@ -8,7 +8,7 @@ trainer:
             num_iter: 14000
             lazy_level: 0
             test_iterations: [3000, 7000, 14000]
-            save_iterations: [14000]
+            save_iterations: [5000, 14000]
             ckpt_iterations: []
             coarse_iteration: 3000
             add_point: False
@@ -17,6 +17,7 @@ trainer:
             batch_size: 1
             shuffle: true
             num_workers: 8
+            tb_log: false
         optimizer_kwargs:
             position_lr_init: 0.00016
             position_lr_final: 0.0000016
@@ -77,7 +78,7 @@ gaussians:
         percent_dense: 0.01
 
 net:
-    name: 'DeformationFields'
+    name: 'DeformationFieldsWrapper'
     kwargs:
         net_width: 128
         timebase_pe: 4

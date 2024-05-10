@@ -13,17 +13,19 @@ import torch
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from src.model.gaussian_model import GaussianModel
+from src.model.deformation_fields import DeformationFieldsWrapper
 from src.utils.sh_utils import eval_sh
 from time import time as get_time
 
 
-def render(viewpoint_camera, pc:GaussianModel, bg_color:torch.Tensor, scaling_modifier=1.0, override_color=None, stage="fine", cam_type=None, debug=False, convert_SHs_python=False, compute_cov3D_python=False):
+def render(viewpoint_camera, pc:GaussianModel, deforms:DeformationFieldsWrapper, bg_color:torch.Tensor, scaling_modifier=1.0, 
+           override_color=None, stage="fine", cam_type=None, debug=False, convert_SHs_python=False, compute_cov3D_python=False):
     """
     Render the scene. 
     Background tensor (bg_color) must be on GPU!
     """
  
-    # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
+    # Container for gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
     try:
         screenspace_points.retain_grad()
@@ -56,14 +58,11 @@ def render(viewpoint_camera, pc:GaussianModel, bg_color:torch.Tensor, scaling_mo
         
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-    # means3D = pc.get_xyz
-    # add deformation to each points
-    # deformation = pc.get_deformation
-
     
     means2D = screenspace_points
     opacity = pc._opacity
     shs = pc.get_features
+    
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -75,18 +74,16 @@ def render(viewpoint_camera, pc:GaussianModel, bg_color:torch.Tensor, scaling_mo
     else:
         scales = pc._scaling
         rotations = pc._rotation
-    deformation_point = pc._deformation_table
+
+    # Compute final means, scales, rotations, opacities and SHs
     if "coarse" in stage:
         means3D_final, scales_final, rotations_final, opacity_final, shs_final = means3D, scales, rotations, opacity, shs
     elif "fine" in stage:
-        means3D_final, scales_final, rotations_final, opacity_final, shs_final = pc._deformation(means3D, scales, 
+        means3D_final, scales_final, rotations_final, opacity_final, shs_final = deforms.deformation_fields(means3D, scales, 
                                                                  rotations, opacity, shs, time)
     else:
         raise NotImplementedError
-
-
-
-
+    
     scales_final = pc.scaling_activation(scales_final)
     rotations_final = pc.rotation_activation(rotations_final)
     opacity = pc.opacity_activation(opacity_final)
@@ -114,7 +111,8 @@ def render(viewpoint_camera, pc:GaussianModel, bg_color:torch.Tensor, scaling_mo
         opacities = opacity,
         scales = scales_final,
         rotations = rotations_final,
-        cov3D_precomp = cov3D_precomp)
+        cov3D_precomp = cov3D_precomp
+    )
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
