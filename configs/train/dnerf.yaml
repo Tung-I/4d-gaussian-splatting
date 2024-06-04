@@ -3,9 +3,9 @@ trainer:
     kwargs:
         trainer_kwargs:
             device: 'cuda'
-            saved_dir: '/home/ubuntu/4d-gaussian-splatting/output/coffee_martini'
+            saved_dir: '/home/ubuntu/4d-gaussian-splatting/output/lego'
             loaded_path: null
-            num_iter: 14000
+            num_iter: 20000
             lazy_level: 0
             test_iterations: [3000, 7000, 14000]
             save_iterations: [5000, 14000]
@@ -36,7 +36,7 @@ trainer:
             lambda_lpips: 0
             weight_constraint_init: 1
             weight_constraint_after: 0.2
-            weight_decay_iteration: 5000
+            weight_decay_iteration: 0
             opacity_reset_interval: 60000
             densification_interval: 100
             densify_from_iter: 500
@@ -45,12 +45,12 @@ trainer:
             densify_grad_threshold_fine_init: 0.0002
             densify_grad_threshold_after: 0.0002
             pruning_from_iter: 500
-            pruning_interval: 100
+            pruning_interval: 8000
             opacity_threshold_coarse: 0.005
             opacity_threshold_fine_init: 0.005
             opacity_threshold_fine_after: 0.005
-            time_smoothness_weight: 0.001
-            plane_tv_weight: 0.0002
+            time_smoothness_weight: 0.01
+            plane_tv_weight: 0.0001
             l1_time_planes: 0.0001
         renderer_kwargs:
             white_background: true
@@ -59,7 +59,7 @@ trainer:
 dataset:
     name: 'Scene'
     kwargs:
-        data_dir: '/home/ubuntu/datasets/dynerf/coffee_martini'
+        data_dir: '/home/ubuntu/datasets/dnerf/lego/'
         extension: ".png"
         downsample: 1.0
         is_stack: true
@@ -80,7 +80,7 @@ gaussians:
 net:
     name: 'DeformationFieldsWrapper'
     kwargs:
-        net_width: 128
+        net_width: 64
         timebase_pe: 4
         defor_depth: 0
         posebase_pe: 10

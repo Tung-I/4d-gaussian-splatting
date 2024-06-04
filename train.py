@@ -63,7 +63,7 @@ def main(args):
 def _parse_args():
     parser = argparse.ArgumentParser(description="The script for the training and the testing.")
     parser.add_argument('--config_path', type=Path, help='The path of the config file.')
-    parser.add_argument('--test', action='store_true', help='Perform the training if specified; otherwise perform the testing.')
+    parser.add_argument('--test', action='store_true', help='Perform the testing if specified.')
     args = parser.parse_args()
     return args
 
