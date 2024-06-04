@@ -11,21 +11,20 @@
 import imageio
 import numpy as np
 import torch
-from scene import Scene
+import logging
 import os
-import cv2
 from tqdm import tqdm
 from os import makedirs
-from gaussian_renderer import render
+from src.gaussian_renderer import render
 import torchvision
-from utils.general_utils import safe_state
-from argparse import ArgumentParser
-from arguments import ModelParams, PipelineParams, get_combined_args, ModelHiddenParams
-from gaussian_renderer import GaussianModel
 from time import time
-import threading
 import concurrent.futures
-import mmengine
+from box import Box
+from pathlib import Path
+import random
+import src
+import argparse
+from src import scene
 
 def multithread_write(image_list, path):
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=None)
@@ -47,27 +46,40 @@ def multithread_write(image_list, path):
 
 to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
 
-def render_set(model_path, name, iteration, views, gaussians, pipeline, background, cam_type):
-    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
-    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+def render_scene(scene, config, split):
+    if split == "train":
+        views = scene.getTrainCameras()
+    elif split == "test":
+        views = scene.getTestCameras()
+    else:
+        views = scene.getVideoCameras()
 
+    # Create output directories
+    model_path = config.trainer.kwargs.trainer_kwargs.saved_dir
+    iteration = config.trainer.kwargs.trainer_kwargs.num_iter
+    render_path = os.path.join(model_path, split, "ours_{}".format(iteration), "renders")
+    gts_path = os.path.join(model_path, split, "ours_{}".format(iteration), "gt")
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
     render_images = []
     gt_list = []
     render_list = []
 
-    print("point nums:",gaussians._xyz.shape[0])
+    print("point nums:", scene.gaussians._xyz.shape[0])
+
+    bg_color = [1,1,1] if config.trainer.kwargs.renderer_kwargs.white_background else [0, 0, 0]
+    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+    cam_type = config.dataset.kwargs.cam_type
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         if idx == 0:time1 = time()
         
-        rendering = render(view, gaussians, pipeline, background, cam_type=cam_type)["render"]
+        rendering = render(view, scene.gaussians, scene.deforms, background, cam_type=cam_type)["render"]
         print("rendering shape:",rendering.shape)
         render_images.append(to8b(rendering).transpose(1,2,0))
         render_list.append(rendering)
 
-        if name in ["train", "test"]:
+        if split in ["train", "test"]:
             if cam_type != "PanopticSports":
                 gt = view.original_image[0:3, :, :]
             else:
@@ -80,50 +92,65 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     multithread_write(gt_list, gts_path)
     multithread_write(render_list, render_path)
 
-    
     # Use imageio to write render_images to a video.mp4
-    video_writer = imageio.get_writer(os.path.join(model_path, name, "ours_{}".format(iteration), 'video_rgb.mp4'), fps=10)
+    video_writer = imageio.get_writer(os.path.join(model_path, split, "ours_{}".format(iteration), 'video_rgb.mp4'), fps=30)
     for image in render_images:
         video_writer.append_data(image)
     video_writer.close()
+    
 
-    # imageio.mimwrite(os.path.join(model_path, name, "ours_{}".format(iteration), 'video_rgb.mp4'), render_images, fps=30)
+def _get_instance(module, config, *args):
+    """
+    Args:
+        module (module): The python module.
+        config (Box): The config to create the class object.
 
-def render_sets(dataset : ModelParams, hyperparam, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, skip_video: bool):
+    Returns:
+        instance (object): The class object defined in the module.
+    """
+    cls = getattr(module, config.name)
+    kwargs = config.get('kwargs')
+    return cls(*args, **config.kwargs) if kwargs else cls(*args)
+
+def main(args):
+    logging.info(f'Load the config from "{args.config_path}".')
+    config = Box.from_yaml(filename=args.config_path)
+    saved_dir = Path(config.trainer.kwargs.trainer_kwargs.saved_dir)
+    if not saved_dir.is_dir():
+        raise ValueError(f'The saved directory "{saved_dir}" does not exist.')
+    
+    # Make the experiment results deterministic.
+    seed = 6666
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    # Scene construction
+    logging.info('Initialize 3DGS and deformation fields.')
+    split = "test" if args.test else "train"
+    saved_dir = config.trainer.kwargs.trainer_kwargs.saved_dir
+    iteration = config.trainer.kwargs.trainer_kwargs.num_iter
+    model_dir = os.path.join(saved_dir, "point_cloud", f"iteration_{iteration}")
+    print("Loading model from:", model_dir)
     with torch.no_grad():
-        gaussians = GaussianModel(dataset.sh_degree, hyperparam)
-        scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
-        cam_type=scene.dataset_type
-        bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
-        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        gaussians = _get_instance(src.model, config.gaussians)
+        deforms = _get_instance(src.model, config.net)
+        deforms.load_model(model_dir, gaussians._xyz.shape[0])
+        _scene = _get_instance(scene, config.dataset, gaussians, deforms)
+        
+        render_scene(_scene, config, split)s
 
-        if not skip_train:
-            render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background,cam_type)
-        if not skip_test:
-            render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background,cam_type)
-        if not skip_video:
-            render_set(dataset.model_path, "video", scene.loaded_iter, scene.getVideoCameras(), gaussians,pipeline,background,cam_type)
+def _parse_args():
+    parser = argparse.ArgumentParser(description="The script for the training and the testing.")
+    parser.add_argument('--config_path', type=Path, help='The path of the config file.')
+    parser.add_argument('--test', action='store_true', help='Perform the testing if specified.')
+    args = parser.parse_args()
+    return args
+
 
 if __name__ == "__main__":
-    # Set up command line argument parser
-    parser = ArgumentParser(description="Testing script parameters")
-    model = ModelParams(parser, sentinel=True)
-    pipeline = PipelineParams(parser)
-    hyperparam = ModelHiddenParams(parser)
-    parser.add_argument("--iteration", default=-1, type=int)
-    parser.add_argument("--skip_train", action="store_true")
-    parser.add_argument("--skip_test", action="store_true")
-    parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--skip_video", action="store_true")
-    parser.add_argument("--configs", type=str)
-    args = get_combined_args(parser)
-    print("Rendering " , args.model_path)
-    if args.configs:
-        from utils.params_utils import merge_hparams
-        # config = mmcv.Config.fromfile(args.configs)
-        config = mmengine.Config.fromfile(args.configs)
-        args = merge_hparams(args, config)
-    # Initialize system state (RNG)
-    safe_state(args.quiet)
-
-    render_sets(model.extract(args), hyperparam.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args.skip_video)
+    args = _parse_args()
+    main(args)

@@ -70,6 +70,8 @@ dataset:
         bd_factor: 0.75
         eval_step: 1
         eval_index: 0
+        cam_type: "dyner"
+        
 
 gaussians:
     name: 'GaussianModel'

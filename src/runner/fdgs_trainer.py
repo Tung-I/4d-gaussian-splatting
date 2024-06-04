@@ -235,7 +235,7 @@ class Gaussian4DTrainer:
             viewpoint_cams = next(self.dataloader)
         images, gt_images, radii_list, visibility_filter_list, viewspace_point_tensor_list = [], [], [], [], []
 
-        # Batch processing of training viewpoints
+        # For each training viewpoint
         for viewpoint_cam in viewpoint_cams:
             render_pkg = render(viewpoint_cam, self.scene.gaussians, self.scene.deforms, self.background, stage=stage, cam_type="dynerf", 
                                 convert_SHs_python=self.convert_SHs_python, compute_cov3D_python=self.compute_cov3D_python)
