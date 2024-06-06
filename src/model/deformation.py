@@ -16,7 +16,7 @@ from src.model.grid import DenseGrid
 
 class DeformationNet(nn.Module):
     def __init__(self, D=8, W=256, input_ch=27, input_ch_time=9, grid_pe=0, skips=[],
-                 no_grid=False, bounds=1.6, kplanes_config={}, multires=[], empty_voxel=False, static_mlp=False):
+                 no_grid=False, bounds=1.6, kplanes_config={}, multires=[], empty_voxel=False, static_mlp=False, device="cuda"):
         super(DeformationNet, self).__init__()
         self.D = D
         self.W = W
@@ -25,7 +25,7 @@ class DeformationNet(nn.Module):
         self.skips = skips
         self.grid_pe = grid_pe
         self.no_grid = no_grid
-        self.grid = HexPlaneField(bounds, kplanes_config, multires)
+        self.grid = HexPlaneField(bounds, kplanes_config, multires).to(device)
         self.bounds = bounds
         self.kplanes_config = kplanes_config
         self.multires = multires

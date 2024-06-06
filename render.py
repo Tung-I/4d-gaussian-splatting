@@ -75,7 +75,6 @@ def render_scene(scene, config, split):
         if idx == 0:time1 = time()
         
         rendering = render(view, scene.gaussians, scene.deforms, background, cam_type=cam_type)["render"]
-        print("rendering shape:",rendering.shape)
         render_images.append(to8b(rendering).transpose(1,2,0))
         render_list.append(rendering)
 
@@ -128,9 +127,9 @@ def main(args):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    # Scene construction
+    # Load the trained model
     logging.info('Initialize 3DGS and deformation fields.')
-    split = "test" if args.test else "train"
+    split = args.split
     saved_dir = config.trainer.kwargs.trainer_kwargs.saved_dir
     iteration = config.trainer.kwargs.trainer_kwargs.num_iter
     model_dir = os.path.join(saved_dir, "point_cloud", f"iteration_{iteration}")
@@ -141,12 +140,13 @@ def main(args):
         deforms.load_model(model_dir, gaussians._xyz.shape[0])
         _scene = _get_instance(scene, config.dataset, gaussians, deforms)
         
-        render_scene(_scene, config, split)s
+        render_scene(_scene, config, split)
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="The script for the training and the testing.")
     parser.add_argument('--config_path', type=Path, help='The path of the config file.')
-    parser.add_argument('--test', action='store_true', help='Perform the testing if specified.')
+    parser.add_argument('--split', type=str, default="test", help='The split to render.')
+
     args = parser.parse_args()
     return args
 

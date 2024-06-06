@@ -101,7 +101,7 @@ def interpolate_ms_features(pts: torch.Tensor,
 
 
 class HexPlaneField(nn.Module):
-    def __init__(self, bounds, planeconfig, multires):
+    def __init__(self, bounds, planeconfig, multires, device="cuda"):
         super().__init__()
         aabb = torch.tensor([[bounds, bounds, bounds],
                              [-bounds, -bounds, -bounds]])  # Q: what is aabb? A: axis-aligned bounding box
@@ -109,6 +109,7 @@ class HexPlaneField(nn.Module):
         self.grid_config =  [planeconfig]
         self.multiscale_res_multipliers = multires
         self.concat_features = True
+        self.device = device
 
         # Init planes
         self.grids = nn.ModuleList()
@@ -142,8 +143,8 @@ class HexPlaneField(nn.Module):
         aabb = torch.tensor([
             xyz_max,
             xyz_min
-        ],dtype=torch.float32)
-        self.aabb = nn.Parameter(aabb,requires_grad=False)
+        ], dtype=torch.float32, device=self.device)
+        self.aabb = nn.Parameter(aabb, requires_grad=False)
         print("HexPlane: set aabb=",self.aabb)
 
     def get_density(self, pts: torch.Tensor, timestamps: Optional[torch.Tensor] = None):
@@ -154,7 +155,6 @@ class HexPlaneField(nn.Module):
         Returns:
             The features at the queried positions.
         """
-        
         pts = normalize_aabb(pts, self.aabb)
         pts = torch.cat((pts, timestamps), dim=-1)  # [n_rays, n_samples, 4]
 

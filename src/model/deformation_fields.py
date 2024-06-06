@@ -32,13 +32,13 @@ class DeformationFieldsWrapper(nn.Module):
         """ Load deformation, deformation_table, deformation_accum
         """
         weight_dict = torch.load(os.path.join(model_dir, "deformation.pth"), map_location="cuda")
-        self.deformation.load_state_dict(weight_dict).to("cuda")
+        self.deformation_fields.load_state_dict(weight_dict)
         self.deformation_table = torch.gt(torch.ones((n_points), device="cuda"),0)
         self.deformation_accum = torch.zeros((n_points, 3), device="cuda")
         if os.path.exists(os.path.join(model_dir, "deformation_table.pth")):
-            self.deformation_table = torch.load(os.path.join(model_dir, "deformation_table.pth"),map_location="cuda")
+            self.deformation_table = torch.load(os.path.join(model_dir, "deformation_table.pth"), map_location="cuda")
         if os.path.exists(os.path.join(model_dir, "deformation_accum.pth")):
-            self.deformation_accum = torch.load(os.path.join(model_dir, "deformation_accum.pth"),map_location="cuda")
+            self.deformation_accum = torch.load(os.path.join(model_dir, "deformation_accum.pth"), map_location="cuda")
         print("loading deformation fields from {}".format(model_dir))
 
     def save_deformation(self, path):

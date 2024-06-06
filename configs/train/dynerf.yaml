@@ -3,7 +3,7 @@ trainer:
     kwargs:
         trainer_kwargs:
             device: 'cuda'
-            saved_dir: '/home/ubuntu/4d-gaussian-splatting/output/coffee_martini'
+            saved_dir: 'output/coffee_martini'
             loaded_path: null
             num_iter: 14000
             lazy_level: 0
@@ -59,7 +59,7 @@ trainer:
 dataset:
     name: 'Scene'
     kwargs:
-        data_dir: '/home/ubuntu/datasets/dynerf/coffee_martini'
+        data_dir: '/dlbimg/datasets/dynerf/coffee_martini'
         extension: ".png"
         downsample: 1.0
         is_stack: true
