@@ -132,13 +132,12 @@ def main(args):
     split = args.split
     saved_dir = config.trainer.kwargs.trainer_kwargs.saved_dir
     iteration = config.trainer.kwargs.trainer_kwargs.num_iter
-    model_dir = os.path.join(saved_dir, "point_cloud", f"iteration_{iteration}")
-    print("Loading model from:", model_dir)
+    print(f"Loading model from: {saved_dir}")
     with torch.no_grad():
         gaussians = _get_instance(src.model, config.gaussians)
         deforms = _get_instance(src.model, config.net)
-        deforms.load_model(model_dir, gaussians._xyz.shape[0])
         _scene = _get_instance(scene, config.dataset, gaussians, deforms)
+        _scene.load(saved_dir, iteration, "fine")
         
         render_scene(_scene, config, split)
 

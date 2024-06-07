@@ -32,6 +32,13 @@ class Scene:
         self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
         self.deforms.deformation_fields.deformation_net.set_aabb(xyz_max, xyz_min)
 
+    def load(self, model_path, iteration, stage):
+        if stage == "coarse":
+            point_cloud_path = os.path.join(model_path, "point_cloud/coarse_iteration_{}".format(iteration))
+        else:
+            point_cloud_path = os.path.join(model_path, "point_cloud/iteration_{}".format(iteration))
+        self.gaussians.load_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
+        self.deforms.load_model(point_cloud_path, self.gaussians._xyz.shape[0])
 
     def save(self, model_path, iteration, stage):
         if stage == "coarse":

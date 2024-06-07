@@ -4,6 +4,7 @@ trainer:
         trainer_kwargs:
             device: 'cuda'
             saved_dir: 'output/coffee_martini'
+            # saved_dir: '/home/tvchen/4DGaussians/output/coffee_ori'
             loaded_path: null
             num_iter: 14000
             lazy_level: 0
