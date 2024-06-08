@@ -2,7 +2,7 @@ import os
 from src.dataset.dataset_readers import sceneLoadTypeCallbacks
 from src.dataset.fourdgs_dataset import FourDGSdataset
 from src.model.gaussian_model import GaussianModel
-from src.model.deformation_fields import DeformationFields
+from src.model.deformation_wrapper import DeformationFields
 
 
 class Scene:

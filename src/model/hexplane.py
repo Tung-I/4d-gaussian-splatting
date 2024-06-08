@@ -11,11 +11,19 @@ def get_normalized_directions(directions):
     """
     return (directions + 1.0) / 2.0
 
-
 def normalize_aabb(pts, aabb):
+    """Normalize points to the range [-1, 1]
+    """
     return (pts - aabb[0]) * (2.0 / (aabb[1] - aabb[0])) - 1.0
 
 def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, align_corners: bool = True) -> torch.Tensor:
+    """
+    Args:
+        grid: [B, feature_dim, reso, reso]
+        coords: [B, n, grid_dim]
+    Returns:
+        interp: [B, n, feature_dim]
+    """
     grid_dim = coords.shape[-1]
     if grid.dim() == grid_dim + 1:
         grid = grid.unsqueeze(0)  # add the batch dimension
@@ -28,7 +36,7 @@ def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, align_corners:
         raise NotImplementedError(f"Grid-sample was called with {grid_dim}D data but is only "
                                   f"implemented for 2 and 3D data.")
 
-    coords = coords.view([coords.shape[0]] + [1] * (grid_dim - 1) + list(coords.shape[1:]))
+    coords = coords.view([coords.shape[0]] + [1]*(grid_dim-1) + list(coords.shape[1:]))
     B, feature_dim = grid.shape[:2]
     n = coords.shape[-2]
     interp = grid_sampler(
@@ -48,15 +56,27 @@ def init_grid_param(
         reso: Sequence[int],
         a: float = 0.1,
         b: float = 0.5):
+    """Initialize grid coefficients
+    # HexPlane: grid 0 shape: torch.Size([1, 16, 64, 64])
+    # HexPlane: grid 1 shape: torch.Size([1, 16, 64, 64])
+    # HexPlane: grid 2 shape: torch.Size([1, 16, 150, 64])
+    # HexPlane: grid 3 shape: torch.Size([1, 16, 64, 64])
+    # HexPlane: grid 4 shape: torch.Size([1, 16, 150, 64])
+    # HexPlane: grid 5 shape: torch.Size([1, 16, 150, 64])
+    """
     assert in_dim == len(reso), "Resolution must have same number of elements as input-dimension"
     has_time_planes = in_dim == 4
     assert grid_nd <= in_dim
+
     coo_combs = list(itertools.combinations(range(in_dim), grid_nd))
+    #coo_combs = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
+
     grid_coefs = nn.ParameterList()
     for ci, coo_comb in enumerate(coo_combs):
         new_grid_coef = nn.Parameter(torch.empty(
             [1, out_dim] + [reso[cc] for cc in coo_comb[::-1]]
         ))
+
         if has_time_planes and 3 in coo_comb:  # Initialize time planes to 1
             nn.init.ones_(new_grid_coef)
         else:
@@ -72,11 +92,15 @@ def interpolate_ms_features(pts: torch.Tensor,
                             concat_features: bool,
                             num_levels: Optional[int],
                             ) -> torch.Tensor:
+    
     coo_combs = list(itertools.combinations(range(pts.shape[-1]), grid_dimensions))
+    #coo_combs = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
+
     if num_levels is None:
         num_levels = len(ms_grids)
     multi_scale_interp = [] if concat_features else 0.
-    grid: nn.ParameterList
+
+    grid: nn.ParameterList 
     for scale_id,  grid in enumerate(ms_grids[:num_levels]):
         interp_space = 1.
         for ci, coo_comb in enumerate(coo_combs):
@@ -97,49 +121,57 @@ def interpolate_ms_features(pts: torch.Tensor,
 
     if concat_features:
         multi_scale_interp = torch.cat(multi_scale_interp, dim=-1)
+
     return multi_scale_interp
 
 
 class HexPlaneField(nn.Module):
+    """
+    self.grids: list of nn.ParameterList
+    """
     def __init__(self, bounds, planeconfig, multires, device="cuda"):
         super().__init__()
         aabb = torch.tensor([[bounds, bounds, bounds],
-                             [-bounds, -bounds, -bounds]])  # Q: what is aabb? A: axis-aligned bounding box
+                             [-bounds, -bounds, -bounds]])
         self.aabb = nn.Parameter(aabb, requires_grad=False)
         self.grid_config =  [planeconfig]
         self.multiscale_res_multipliers = multires
         self.concat_features = True
         self.device = device
 
-        # Init planes
         self.grids = nn.ModuleList()
         self.feat_dim = 0
+        
         for res in self.multiscale_res_multipliers:
-            # initialize coordinate grid
-            config = self.grid_config[0].copy()
             # Resolution fix: multi-res only on spatial planes
+            config = self.grid_config[0].copy()
             config["resolution"] = [
                 r * res for r in config["resolution"][:3]
             ] + config["resolution"][3:]
+
+            # Init the grids
             gp = init_grid_param(
                 grid_nd=config["grid_dimensions"],
                 in_dim=config["input_coordinate_dim"],
                 out_dim=config["output_coordinate_dim"],
                 reso=config["resolution"],
             )
-            # shape[1] is out-dim - Concatenate over feature len for each scale
+
+            # Calculate out_feat dimension
             if self.concat_features:
                 self.feat_dim += gp[-1].shape[1]
             else:
                 self.feat_dim = gp[-1].shape[1]
-            self.grids.append(gp)
-        print("HexPlane: feature_dim:",self.feat_dim)
-    @property
 
+            self.grids.append(gp)
+
+        print(f"HexPlane: feature_dim: {self.feat_dim}")
+
+    @property
     def get_aabb(self):
         return self.aabb[0], self.aabb[1]
     
-    def set_aabb(self,xyz_max, xyz_min):
+    def set_aabb(self, xyz_max, xyz_min):
         aabb = torch.tensor([
             xyz_max,
             xyz_min
@@ -148,25 +180,19 @@ class HexPlaneField(nn.Module):
         print("HexPlane: set aabb=",self.aabb)
 
     def get_density(self, pts: torch.Tensor, timestamps: Optional[torch.Tensor] = None):
-        """
-        Args:
-            pts: The positions to query the density at.
-            timestamps: The timestamps to query the density at.
-        Returns:
-            The features at the queried positions.
+        """Return the feature at given spatial-temporal points
         """
         pts = normalize_aabb(pts, self.aabb)
         pts = torch.cat((pts, timestamps), dim=-1)  # [n_rays, n_samples, 4]
-
         pts = pts.reshape(-1, pts.shape[-1])
+
         features = interpolate_ms_features(
             pts, ms_grids=self.grids,  # noqa
             grid_dimensions=self.grid_config[0]["grid_dimensions"],
             concat_features=self.concat_features, num_levels=None)
+        
         if len(features) < 1:
             features = torch.zeros((0, 1)).to(features.device)
-
-
         return features
 
     def forward(self,

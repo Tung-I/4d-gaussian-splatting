@@ -6,9 +6,9 @@ from src.model.deformation import DeformationFields
 from src.utils.plane_utils import compute_plane_smoothness
 from src.utils.sh_utils import RGB2SH
 
-class DeformationFieldsWrapper(nn.Module):
+class DeformationWrapper(nn.Module):
     def __init__(self, **kwargs):
-        super(DeformationFieldsWrapper, self).__init__()  
+        super(DeformationWrapper, self).__init__()  
         self.net_width = kwargs['net_width']
         self.timebase_pe = kwargs['timebase_pe']
         self.defor_depth = kwargs['defor_depth']
@@ -42,9 +42,9 @@ class DeformationFieldsWrapper(nn.Module):
         print("loading deformation fields from {}".format(model_dir))
 
     def save_deformation(self, path):
-        torch.save(self.deformation_fields.state_dict(),os.path.join(path, "deformation.pth"))
-        torch.save(self.deformation_table,os.path.join(path, "deformation_table.pth"))
-        torch.save(self.deformation_accum,os.path.join(path, "deformation_accum.pth"))
+        torch.save(self.deformation_fields.state_dict(), os.path.join(path, "deformation.pth"))
+        torch.save(self.deformation_table, os.path.join(path, "deformation_table.pth"))
+        torch.save(self.deformation_accum, os.path.join(path, "deformation_accum.pth"))
 
     def update_deformation_table(self, threshold):
         self.deformation_table = torch.gt(self.deformation_accum.max(dim=-1).values/100, threshold)

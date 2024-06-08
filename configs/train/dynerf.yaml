@@ -8,8 +8,8 @@ trainer:
             loaded_path: null
             num_iter: 14000
             lazy_level: 0
-            test_iterations: [3000, 7000, 14000]
-            save_iterations: [5000, 14000]
+            test_iterations: [3000, 8000, 10000, 12000, 14000]
+            save_iterations: [14000]
             ckpt_iterations: []
             coarse_iteration: 3000
             add_point: False
@@ -81,16 +81,16 @@ gaussians:
         percent_dense: 0.01
 
 net:
-    name: 'DeformationFieldsWrapper'
+    name: 'DeformationWrapper'
     kwargs:
         net_width: 128
-        timebase_pe: 4
         defor_depth: 0
+        timebase_pe: 4
         posebase_pe: 10
         scale_rotation_pe: 2
         opacity_pe: 2
-        timenet_width: 64
-        timenet_output: 32
+        # timenet_width: 64
+        # timenet_output: 32
         bounds: 1.6
         kplanes_config: {
             'grid_dimensions': 2,

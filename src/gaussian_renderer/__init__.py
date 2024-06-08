@@ -13,16 +13,14 @@ import torch
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from src.model.gaussian_model import GaussianModel
-from src.model.deformation_fields import DeformationFieldsWrapper
+from src.model.deformation_wrapper import DeformationWrapper
 from src.utils.sh_utils import eval_sh
 from time import time as get_time
 
 
-def render(viewpoint_camera, pc:GaussianModel, deforms:DeformationFieldsWrapper, bg_color:torch.Tensor, scaling_modifier=1.0, 
+def render(viewpoint_camera, pc:GaussianModel, deforms:DeformationWrapper, bg_color:torch.Tensor, scaling_modifier=1.0, 
            override_color=None, stage="fine", cam_type=None, debug=False, convert_SHs_python=False, compute_cov3D_python=False):
-    """
-    Render the scene. 
-    Background tensor (bg_color) must be on GPU!
+    """Render the scene. 
     """
  
     # Container for gradients of the 2D (screen-space) means
